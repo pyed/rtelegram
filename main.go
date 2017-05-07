@@ -126,12 +126,9 @@ var (
 	// duration controls how many intervals will happen
 	duration = 10
 
-	// escape markdown
+	// asterisk may cause problems parsing markdown, replace it with `•`
 	// affects only markdown users: info, active, head, tail
-	mdReplacer = strings.NewReplacer("*", "\\*",
-		"[", "\\[",
-		"_", "\\_",
-		"`", "\\`")
+	mdReplacer = strings.NewReplacer("*", "•")
 )
 
 // init flags
@@ -247,7 +244,8 @@ func init() {
 	var err error
 	rtorrent, err = rtapi.NewRtorrent(SCGIURL)
 	if err != nil {
-		fmt.Fprint(os.Stderr, "[ERROR] rTorrent: %s\n", err)
+		fmt.Fprintf(os.Stderr, "[ERROR] rTorrent: %s\n", err)
+		os.Exit(1)
 	}
 }
 
