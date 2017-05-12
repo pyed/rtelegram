@@ -19,7 +19,7 @@ func errors() {
 	buf := new(bytes.Buffer)
 	for i := range torrents {
 		if torrents[i].State == rtapi.Error {
-			buf.WriteString(fmt.Sprintf("<%d> %s\n%s\n",
+			buf.WriteString(fmt.Sprintf("<%d> %s\n%s\n\n",
 				i, torrents[i].Name, torrents[i].Message))
 		}
 	}
