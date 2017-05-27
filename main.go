@@ -124,7 +124,7 @@ var (
 	// interval in seconds for live updates, affects: "active", "info", "speed", "head", "tail"
 	interval time.Duration = 3
 	// duration controls how many intervals will happen
-	duration = 10
+	duration = 5
 
 	// asterisk may cause problems parsing markdown, replace it with `•`
 	// affects only markdown users: info, active, head, tail
