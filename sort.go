@@ -80,7 +80,7 @@ func sort(tokens []string) {
 			send("sort: by `reversed up total`", true)
 			break
 		}
-		rtapi.CurrentSorting = rtapi.ByUpTotalRev
+		rtapi.CurrentSorting = rtapi.ByUpTotal
 		send("sort: by `up total`", true)
 	default:
 		send("unkown sorting method", false)
