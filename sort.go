@@ -17,7 +17,8 @@ func sort(tokens []string) {
 	}
 
 	var reversed bool
-	if strings.ToLower(tokens[0]) == "rev" {
+	if strings.ToLower(tokens[0]) == "rev" &&
+		len(tokens) > 1 {
 		reversed = true
 		tokens = tokens[1:]
 	}
