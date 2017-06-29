@@ -144,7 +144,7 @@ func init() {
 
 	// set the usage message
 	flag.Usage = func() {
-		fmt.Fprint(os.Stderr, "Usage: rtelegram <-token=TOKEN> <-master=@tuser[,@user2..]> [-url=localhost/unix]\n\n")
+		fmt.Fprint(os.Stderr, "Usage: rtelegram <-token=TOKEN> <-masters=@tuser[,@user2..]> [-url=localhost/unix]\n\n")
 		fmt.Fprint(os.Stderr, "Example: rtelegram -token=1234abc -masters=user1,user2 -url=localhost:4374\n")
 		fmt.Fprint(os.Stderr, "Example: RT_TOKEN=1234abc RT_MASTERS=user1 rtelegram\n\n")
 		flag.PrintDefaults()
