@@ -281,7 +281,7 @@ func main() {
 		case "tail", "/tail", "ta", "/ta":
 			go tail(tokens[1:])
 
-		case "downs", "/downs", "dl", "/dl":
+		case "down", "/down", "dl", "/dl":
 			go downs()
 
 		case "seeding", "/seeding", "sd", "/sd":
