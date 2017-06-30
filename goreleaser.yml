@@ -1,0 +1,12 @@
+build:
+  binary: rtelegram
+  goos:
+    - windows
+    - darwin
+    - linux
+  goarch:
+    - amd64
+    - 386
+  ignore:
+    - goos: darwin
+      goarch: 386
