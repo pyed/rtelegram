@@ -2,6 +2,8 @@
 
 #### Manage your rTorrent through Telegram.
 
+<img src="https://raw.githubusercontent.com/pyed/rtelegram/master/demo.gif" width="400" />
+
 ## Install
 
 Just [download](https://github.com/pyed/rtelegram/releases) the appropriate binary for your OS, place `rtelegram` in your `$PATH` and you are good to go.
@@ -16,10 +18,8 @@ Thanks to [pyed/rtapi](https://github.com/pyed/rtapi) You don't need a complicat
 
 And you should be good to go!
 
-## Usage
+## Wiki
 
-[Wiki](https://github.com/pyed/rtelegram/wiki)
-
-## Getting Completion notifications
-
-[Notifications](https://github.com/pyed/rtelegram/wiki/Notifications)
+* [Getting started](https://github.com/pyed/rtelegram/wiki)
+* [Commands](https://github.com/pyed/rtelegram/wiki/Commands)
+* [How to get notifications](https://github.com/pyed/rtelegram/wiki/Notifications)
