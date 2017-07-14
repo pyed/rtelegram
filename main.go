@@ -156,6 +156,10 @@ func init() {
 	if BotToken == "" {
 		if envVar := os.Getenv("RT_TOKEN"); len(envVar) > 1 {
 			BotToken = envVar
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: Telegram Token is missing!\n")
+			flag.Usage()
+			os.Exit(1)
 		}
 	}
 
@@ -163,22 +167,19 @@ func init() {
 	if mastersStr == "" {
 		if envVar := os.Getenv("RT_MASTERS"); len(envVar) > 1 {
 			mastersStr = envVar
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: I have no masters!\n")
+			flag.Usage()
+			os.Exit(1)
 		}
 	}
 
 	// process mastersStr into Masters
 	// get rid of @ and spaces, then split on ','
-	strings.Replace(mastersStr, "@", "", -1)
-	strings.Replace(mastersStr, " ", "", -1)
+	mastersStr = strings.Replace(mastersStr, "@", "", -1)
+	mastersStr = strings.Replace(mastersStr, " ", "", -1)
+	mastersStr = strings.ToLower(mastersStr)
 	Masters = strings.Split(mastersStr, ",")
-
-	// make sure that we have the two madatory arguments: telegram token & master's handler.
-	if BotToken == "" ||
-		len(Masters) < 1 {
-		fmt.Fprintf(os.Stderr, "Error: Mandatory argument missing! (-token or -master)\n\n")
-		flag.Usage()
-		os.Exit(1)
-	}
 
 	// if we got a log file, log to it
 	if LogFile != "" {
