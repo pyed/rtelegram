@@ -107,7 +107,6 @@ var (
 	LogFile    string
 	ComLogFile string
 	AddLogFile string
-	t string
 	NoLive     bool
 
 	// telegram
@@ -206,9 +205,10 @@ func init() {
 						continue
 					}
 
-					t := time.Now()
-					t.Format("Mon Jan _2 2006 15:04:05")
-					msg := fmt.Sprintf("%s - Completed: %s", t, line)
+					//t := time.Now()
+					//t.Format("Mon Jan _2 2006 15:04:05")
+					//msg := fmt.Sprintf("%s - Completed: %s", t, line)
+					msg := fmt.Sprintf("Completed: %s", line)
 					send(msg, false)
 				case err := <-ft.Errors():
 					logger.Printf("[ERROR] tailing completed torrents log: %s", err)
@@ -231,9 +231,10 @@ func init() {
 					if chatID == 0 {
 						continue
 					}
-					t := time.Now()
-					t.Format("Mon Jan _2 2006 15:04:05")
-					msg := fmt.Sprintf("%s - Added: %s", t, line)
+					//t := time.Now()
+					//t.Format("Mon Jan _2 2006 15:04:05")
+					//msg := fmt.Sprintf("%s - Added: %s", t, line)
+					msg := fmt.Sprintf("Added: %s", line)
 					send(msg, false)
 				case err := <-ft.Errors():
 					logger.Printf("[ERROR] tailing added torrents log: %s", err)
