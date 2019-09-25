@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 )
 
 // add takes an URL to a .torrent file to add it to rtorrent
