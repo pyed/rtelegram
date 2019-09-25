@@ -6,12 +6,13 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/pyed/rtapi"
 	"github.com/pyed/tailer"
 	"gopkg.in/telegram-bot-api.v4"
+	
+	"time"
 )
 
 const (
@@ -205,7 +206,7 @@ func init() {
 						continue
 					}
 
-					//t := time.Now()
+					t := time.Now()
 					//t.Format("Mon Jan _2 2006 15:04:05")
 					//msg := fmt.Sprintf("%s - Completed: %s", t, line)
 					msg := fmt.Sprintf("Completed: %s", line)
