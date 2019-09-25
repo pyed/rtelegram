@@ -140,6 +140,7 @@ func init() {
 	flag.StringVar(&SCGIURL, "url", "localhost:5000", "rTorrent SCGI URL")
 	flag.StringVar(&LogFile, "logfile", "", "Send logs to a file")
 	flag.StringVar(&ComLogFile, "completed-torrents-logfile", "", "Watch completed torrents log file to notify upon new ones.")
+	flag.StringVar(&AddLogFile, "added-torrents-logfile", "", "Watch added torrents log file to notify upon new ones.")
 	flag.BoolVar(&NoLive, "no-live", false, "Don't edit and update info after sending")
 
 	// set the usage message
@@ -214,6 +215,30 @@ func init() {
 		}()
 	}
 
+	// if we got a added torrents log file, monitor it for torrents added to notify upon them.
+	if AddLogFile != "" {
+		go func() {
+			ft := tailer.RunFileTailer(AddLogFile, false, nil)
+
+			for {
+				select {
+				case line := <-ft.Lines():
+					// if we don't have a chatID continue
+					if chatID == 0 {
+						continue
+					}
+
+					msg := fmt.Sprintf("Added: %s", line)
+					send(msg, false)
+				case err := <-ft.Errors():
+					logger.Printf("[ERROR] tailing added torrents log: %s", err)
+					return
+				}
+
+			}
+		}()
+	}
+	
 	// log the flags
 	logger.Printf("[INFO] Token=%s\n\t\tMasters=%s\n\t\tURL=%s",
 		BotToken, Masters, SCGIURL)
