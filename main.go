@@ -204,7 +204,9 @@ func init() {
 						continue
 					}
 
-					msg := fmt.Sprintf("Completed: %s", line)
+					t := time.Now()
+					t.Format("Mon Jan _2 2006 15:04:05")
+					msg := fmt.Sprintf("%s - Completed: %s", t, line)
 					send(msg, false)
 				case err := <-ft.Errors():
 					logger.Printf("[ERROR] tailing completed torrents log: %s", err)
@@ -227,8 +229,9 @@ func init() {
 					if chatID == 0 {
 						continue
 					}
-
-					msg := fmt.Sprintf("Added: %s", line)
+					t := time.Now()
+					t.Format("Mon Jan _2 2006 15:04:05")
+					msg := fmt.Sprintf("%s - Added: %s", t, line)
 					send(msg, false)
 				case err := <-ft.Errors():
 					logger.Printf("[ERROR] tailing added torrents log: %s", err)
