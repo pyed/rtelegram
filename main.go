@@ -106,6 +106,8 @@ var (
 	SCGIURL    string
 	LogFile    string
 	ComLogFile string
+	AddLogFile string
+	t string
 	NoLive     bool
 
 	// telegram
