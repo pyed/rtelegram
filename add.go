@@ -26,8 +26,11 @@ func add(tokens []string, filename string) {
 			filename = filepath.Base(url)
 		}
 
-		t := time.Now()
-		t.Format("Mon Jan _2 2006 15:04:05")
-		send(fmt.Sprintf("%s - Added: %s", t, filename), false)
+		if TimeStamp != "" {
+			t := time.Now()
+			t.Format("Mon Jan _2 2006 15:04:05")
+			send(fmt.Sprintf("%s - Added: %s", t, filename), false) }
+		else {
+			send(fmt.Sprintf("Added: %s", filename), false) }
 	}
 }
