@@ -108,6 +108,7 @@ var (
 	LogFile    string
 	ComLogFile string
 	AddLogFile string
+	TimeStamp string
 	NoLive     bool
 
 	// telegram
@@ -143,6 +144,7 @@ func init() {
 	flag.StringVar(&LogFile, "logfile", "", "Send logs to a file")
 	flag.StringVar(&ComLogFile, "completed-torrents-logfile", "", "Watch completed torrents log file to notify upon new ones.")
 	flag.StringVar(&AddLogFile, "added-torrents-logfile", "", "Watch added torrents log file to notify upon new ones.")
+	flag.StringVar(&TimeStamp, "timestamp", "", "Activate timestamped notifications.")
 	flag.BoolVar(&NoLive, "no-live", false, "Don't edit and update info after sending")
 
 	// set the usage message
@@ -206,10 +208,13 @@ func init() {
 						continue
 					}
 
-					t := time.Now()
-					t.Format("Mon Jan _2 2006 15:04:05")
-					msg := fmt.Sprintf("%s - Completed: %s", t, line)
-					//msg := fmt.Sprintf("Completed: %s", line)
+					if TimeStamp != "" {
+						t := time.Now()
+						t.Format("Mon Jan _2 2006 15:04:05")
+						msg := fmt.Sprintf("%s - Completed: %s", t, line)
+					}
+					else {					
+						msg := fmt.Sprintf("Completed: %s", line) }
 					send(msg, false)
 				case err := <-ft.Errors():
 					logger.Printf("[ERROR] tailing completed torrents log: %s", err)
@@ -232,10 +237,13 @@ func init() {
 					if chatID == 0 {
 						continue
 					}
-					t := time.Now()
-					t.Format("Mon Jan _2 2006 15:04:05")
-					msg := fmt.Sprintf("%s - Added: %s", t, line)
-					//msg := fmt.Sprintf("Added: %s", line)
+					if TimeStamp != "" {
+						t := time.Now()
+						t.Format("Mon Jan _2 2006 15:04:05")
+						msg := fmt.Sprintf("%s - Added: %s", t, line)
+					}
+					else {
+						msg := fmt.Sprintf("Added: %s", line) }
 					send(msg, false)
 				case err := <-ft.Errors():
 					logger.Printf("[ERROR] tailing added torrents log: %s", err)
