@@ -20,6 +20,6 @@ And you should be good to go!
 
 ## Wiki
 
-* [Getting started](https://github.com/juezfenix/rtelegram/wiki)
-* [Commands](https://github.com/juezfenix/rtelegram/wiki/Commands)
-* [How to get notifications](https://github.com/juezfenix/rtelegram/wiki/Notifications)
+* [Getting started](https://github.com/pyed/rtelegram/wiki)
+* [Commands](https://github.com/pyed/rtelegram/wiki/Commands)
+* [How to get notifications](https://github.com/pyed/rtelegram/wiki/Notifications)
