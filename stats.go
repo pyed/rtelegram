@@ -20,13 +20,13 @@ func stats() {
 	if stats.ThrottleUp == 0 {
 		throttleUp = "off"
 	} else {
-		throttleUp = humanize.Bytes(stats.ThrottleUp)
+		throttleUp = humanize.IBytes(stats.ThrottleUp)
 	}
 
 	if stats.ThrottleDown == 0 {
 		throttleDown = "off"
 	} else {
-		throttleDown = humanize.Bytes(stats.ThrottleDown)
+		throttleDown = humanize.IBytes(stats.ThrottleDown)
 	}
 
 	msg := fmt.Sprintf(
@@ -38,7 +38,7 @@ Total Uploaded: *%s*
 Total Download: *%s*
 		`,
 		throttleUp, throttleDown, stats.Port,
-		humanize.Bytes(stats.TotalUp), humanize.Bytes(stats.ThrottleDown),
+		humanize.IBytes(stats.TotalUp), humanize.IBytes(stats.TotalDown),
 	)
 
 	send(msg, true)

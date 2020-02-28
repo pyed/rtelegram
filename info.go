@@ -7,7 +7,7 @@ import (
 
 	humanize "github.com/pyed/go-humanize"
 	"github.com/pyed/rtapi"
-	"gopkg.in/telegram-bot-api.v4"
+	tgbotapi "gopkg.in/telegram-bot-api.v4"
 )
 
 // info takes an id of a torrent and returns some info about it
@@ -38,9 +38,9 @@ func info(tokens []string) {
 		// format the info
 		torrentName := mdReplacer.Replace(torrents[id].Name) // escape markdown
 		info := fmt.Sprintf("*%s*\n%s *%s* (*%s*) ↓ *%s*  ↑ *%s* R: *%.2f* UP: *%s*\nAdded: *%s*, ETA: *%d*\nTracker: `%s`",
-			torrentName, torrents[id].State, humanize.Bytes(torrents[id].Completed), torrents[id].Percent,
-			humanize.Bytes(torrents[id].DownRate), humanize.Bytes(torrents[id].UpRate), torrents[id].Ratio,
-			humanize.Bytes(torrents[id].UpTotal), time.Unix(int64(torrents[id].Age), 0).Format(time.Stamp),
+			torrentName, torrents[id].State, humanize.IBytes(torrents[id].Completed), torrents[id].Percent,
+			humanize.IBytes(torrents[id].DownRate), humanize.IBytes(torrents[id].UpRate), torrents[id].Ratio,
+			humanize.IBytes(torrents[id].UpTotal), time.Unix(int64(torrents[id].Age), 0).Format(time.Stamp),
 			torrents[id].ETA, torrents[id].Tracker.Hostname())
 
 		// send it
@@ -63,9 +63,9 @@ func info(tokens []string) {
 
 				torrentName := mdReplacer.Replace(torrent.Name) // escape markdown
 				info := fmt.Sprintf("*%s*\n%s *%s* (*%s*) ↓ *%s*  ↑ *%s* R: *%.2f* UP: *%s*\nAdded: *%s*, ETA: *%d*\nTracker: `%s`",
-					torrentName, torrent.State, humanize.Bytes(torrent.Completed), torrent.Percent,
-					humanize.Bytes(torrent.DownRate), humanize.Bytes(torrent.UpRate), torrent.Ratio,
-					humanize.Bytes(torrent.UpTotal), time.Unix(int64(torrent.Age), 0).Format(time.Stamp),
+					torrentName, torrent.State, humanize.IBytes(torrent.Completed), torrent.Percent,
+					humanize.IBytes(torrent.DownRate), humanize.IBytes(torrent.UpRate), torrent.Ratio,
+					humanize.IBytes(torrent.UpTotal), time.Unix(int64(torrent.Age), 0).Format(time.Stamp),
 					torrent.ETA, torrent.Tracker.Hostname())
 
 				// update the message
