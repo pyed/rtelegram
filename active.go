@@ -6,7 +6,7 @@ import (
 	"time"
 
 	humanize "github.com/pyed/go-humanize"
-	"gopkg.in/telegram-bot-api.v4"
+	tgbotapi "gopkg.in/telegram-bot-api.v4"
 )
 
 // active will send torrents that are actively downloading or uploading
@@ -24,9 +24,9 @@ func active() {
 			torrents[i].UpRate > 0 {
 			torrentName := mdReplacer.Replace(torrents[i].Name) // escape markdown
 			buf.WriteString(fmt.Sprintf("`<%d>` *%s*\n%s *%s* (%s) ↓ *%s*  ↑ *%s* R: *%.2f*\n\n",
-				i, torrentName, torrents[i].State, humanize.Bytes(torrents[i].Completed),
-				torrents[i].Percent, humanize.Bytes(torrents[i].DownRate),
-				humanize.Bytes(torrents[i].UpRate), torrents[i].Ratio))
+				i, torrentName, torrents[i].State, humanize.IBytes(torrents[i].Completed),
+				torrents[i].Percent, humanize.IBytes(torrents[i].DownRate),
+				humanize.IBytes(torrents[i].UpRate), torrents[i].Ratio))
 		}
 	}
 	if buf.Len() == 0 {
@@ -58,9 +58,9 @@ func active() {
 				torrents[i].DownRate > 0 {
 				torrentName := mdReplacer.Replace(torrents[i].Name) // replace markdown chars
 				buf.WriteString(fmt.Sprintf("`<%d>` *%s*\n%s *%s* (%s) ↓ *%s*  ↑ *%s* R: *%.2f*\n\n",
-					i, torrentName, torrents[i].State, humanize.Bytes(torrents[i].Completed),
-					torrents[i].Percent, humanize.Bytes(torrents[i].DownRate),
-					humanize.Bytes(torrents[i].UpRate), torrents[i].Ratio))
+					i, torrentName, torrents[i].State, humanize.IBytes(torrents[i].Completed),
+					torrents[i].Percent, humanize.IBytes(torrents[i].DownRate),
+					humanize.IBytes(torrents[i].UpRate), torrents[i].Ratio))
 			}
 		}
 
@@ -80,7 +80,7 @@ func active() {
 			// escape markdown
 			torrentName := mdReplacer.Replace(torrents[i].Name)
 			buf.WriteString(fmt.Sprintf("`<%d>` *%s*\n%s *%s* (%s) ↓ *-*  ↑ *-* R: *%.2f*\n\n",
-				i, torrentName, torrents[i].State, humanize.Bytes(torrents[i].Completed),
+				i, torrentName, torrents[i].State, humanize.IBytes(torrents[i].Completed),
 				torrents[i].Percent, torrents[i].Ratio))
 		}
 	}

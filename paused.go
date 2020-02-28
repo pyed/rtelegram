@@ -22,8 +22,8 @@ func paused() {
 		if torrents[i].State == rtapi.Stopped {
 			buf.WriteString(fmt.Sprintf("<%d> %s\n%s (%s) DL: %s UL: %s  R: %s\n\n",
 				i, torrents[i].Name, torrents[i].State,
-				torrents[i].Percent, humanize.Bytes(torrents[i].Completed),
-				humanize.Bytes(torrents[i].UpTotal), torrents[i].Ratio))
+				torrents[i].Percent, humanize.IBytes(torrents[i].Completed),
+				humanize.IBytes(torrents[i].UpTotal), torrents[i].Ratio))
 		}
 	}
 

@@ -5,14 +5,14 @@ import (
 	"time"
 
 	humanize "github.com/pyed/go-humanize"
-	"gopkg.in/telegram-bot-api.v4"
+	tgbotapi "gopkg.in/telegram-bot-api.v4"
 )
 
 // speed will echo back the current download and upload speeds
 func speed() {
 	down, up := rtorrent.Speeds()
 
-	msg := fmt.Sprintf("↓ %s  ↑ %s", humanize.Bytes(down), humanize.Bytes(up))
+	msg := fmt.Sprintf("↓ %s  ↑ %s", humanize.IBytes(down), humanize.IBytes(up))
 
 	msgID := send(msg, false)
 
@@ -24,7 +24,7 @@ func speed() {
 		time.Sleep(time.Second * interval)
 		down, up = rtorrent.Speeds()
 
-		msg = fmt.Sprintf("↓ %s  ↑ %s", humanize.Bytes(down), humanize.Bytes(up))
+		msg = fmt.Sprintf("↓ %s  ↑ %s", humanize.IBytes(down), humanize.IBytes(up))
 
 		editConf := tgbotapi.NewEditMessageText(chatID, msgID, msg)
 		Bot.Send(editConf)
