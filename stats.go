@@ -33,11 +33,11 @@ func stats() {
 		`
 \[Throttle  *%s* / *%s*]
 \[Port *%s*]
-
+\[*%s*]
 Total Uploaded: *%s*
 Total Download: *%s*
 		`,
-		throttleUp, throttleDown, stats.Port,
+		throttleUp, throttleDown, stats.Port, stats.Directory,
 		humanize.IBytes(stats.TotalUp), humanize.IBytes(stats.TotalDown),
 	)
 

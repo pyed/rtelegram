@@ -11,7 +11,7 @@ import (
 
 	"github.com/pyed/rtapi"
 	"github.com/pyed/tailer"
-	"gopkg.in/telegram-bot-api.v4"
+	tgbotapi "gopkg.in/telegram-bot-api.v4"
 )
 
 const (
