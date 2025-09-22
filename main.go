@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -374,47 +375,75 @@ func main() {
 	}
 }
 
+const telegramMessageLimit = 4096
+
+func chunkMessage(text string, limit int) []string {
+	if limit <= 0 {
+		return []string{text}
+	}
+
+	var chunks []string
+	for len(text) > 0 {
+		if utf8.RuneCountInString(text) <= limit {
+			chunks = append(chunks, text)
+			break
+		}
+
+		byteLimit := 0
+		runeCount := 0
+		for byteLimit < len(text) && runeCount < limit {
+			_, size := utf8.DecodeRuneInString(text[byteLimit:])
+			byteLimit += size
+			runeCount++
+		}
+
+		safeWindow := []byte(text[:byteLimit])
+		cut := byteLimit
+		if idx := bytes.LastIndexByte(safeWindow, '\n'); idx >= 0 {
+			cut = idx + 1
+		}
+
+		if cut == 0 {
+			_, size := utf8.DecodeRuneInString(text)
+			if size == 0 {
+				break
+			}
+			cut = size
+		}
+
+		chunks = append(chunks, text[:cut])
+		text = text[cut:]
+	}
+
+	if len(chunks) == 0 {
+		chunks = append(chunks, "")
+	}
+
+	return chunks
+}
+
 // send takes a chat id and a message to send, returns the message id of the send message
 func send(text string, markdown bool) int {
 	// set typing action
 	action := tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping)
 	Bot.Send(action)
 
-	// check the rune count, telegram is limited to 4096 chars per message;
-	// so if our message is > 4096, split it in chunks the send them.
-	msgRuneCount := utf8.RuneCountInString(text)
-LenCheck:
-	stop := 4095
-	if msgRuneCount > 4096 {
-		for text[stop] != 10 { // '\n'
-			stop--
-		}
-		msg := tgbotapi.NewMessage(chatID, text[:stop])
+	chunks := chunkMessage(text, telegramMessageLimit)
+	var resp tgbotapi.Message
+
+	for _, chunk := range chunks {
+		msg := tgbotapi.NewMessage(chatID, chunk)
 		msg.DisableWebPagePreview = true
 		if markdown {
 			msg.ParseMode = tgbotapi.ModeMarkdown
 		}
 
-		// send current chunk
-		if _, err := Bot.Send(msg); err != nil {
+		r, err := Bot.Send(msg)
+		if err != nil {
 			logger.Printf("[ERROR] Send: %s", err)
+			continue
 		}
-		// move to the next chunk
-		text = text[stop:]
-		msgRuneCount = utf8.RuneCountInString(text)
-		goto LenCheck
-	}
-
-	// if msgRuneCount < 4096, send it normally
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.DisableWebPagePreview = true
-	if markdown {
-		msg.ParseMode = tgbotapi.ModeMarkdown
-	}
-
-	resp, err := Bot.Send(msg)
-	if err != nil {
-		logger.Printf("[ERROR] Send: %s", err)
+		resp = r
 	}
 
 	return resp.MessageID

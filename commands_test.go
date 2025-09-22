@@ -1,8 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/pyed/rtapi"
 	tgbotapi "gopkg.in/telegram-bot-api.v4"
@@ -56,6 +60,7 @@ func (b *stubTelegramBot) sentEdits() []tgbotapi.EditMessageTextConfig {
 	}
 	return edits
 }
+
 
 func (b *stubTelegramBot) sentActions() []tgbotapi.ChatActionConfig {
 	var actions []tgbotapi.ChatActionConfig
