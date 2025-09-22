@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"testing"
 	"time"
 	"unicode/utf8"
 
@@ -109,11 +110,12 @@ var (
 	NoLive     bool
 
 	// telegram
-	Bot     *tgbotapi.BotAPI
-	Updates <-chan tgbotapi.Update
+	Bot         TelegramBot
+	Updates     <-chan tgbotapi.Update
+	botUsername string
 
 	// rTorrent
-	rtorrent *rtapi.Rtorrent
+	rtorrent RtorrentClient
 
 	// chatID will be used to keep track of which chat to send to.
 	chatID int64
@@ -134,6 +136,9 @@ var (
 // init flags
 func init() {
 	var mastersStr string
+	if runningInTest() {
+		testing.Init()
+	}
 	// define arguments and parse them.
 	flag.StringVar(&BotToken, "token", "", "Telegram bot token, Can be passed via environment variable 'RT_TOKEN'")
 	flag.StringVar(&mastersStr, "masters", "", "Comma-seperated Telegram handlers, The bot will only respond to them, Can be passed via environment variable 'RT_MASTERS'")
@@ -150,12 +155,16 @@ func init() {
 		flag.PrintDefaults()
 	}
 
-	flag.Parse()
+	if !runningInTest() {
+		flag.Parse()
+	}
 
 	// if we don't have BotToken passed, check the environment variable "RT_TOKEN"
 	if BotToken == "" {
 		if envVar := os.Getenv("RT_TOKEN"); len(envVar) > 1 {
 			BotToken = envVar
+		} else if runningInTest() {
+			BotToken = "test-token"
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: Telegram Token is missing!\n")
 			flag.Usage()
@@ -167,6 +176,8 @@ func init() {
 	if mastersStr == "" {
 		if envVar := os.Getenv("RT_MASTERS"); len(envVar) > 1 {
 			mastersStr = envVar
+		} else if runningInTest() {
+			mastersStr = "tester"
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: I have no masters!\n")
 			flag.Usage()
@@ -223,12 +234,14 @@ func init() {
 func init() {
 	// authorize using the token
 	var err error
-	Bot, err = tgbotapi.NewBotAPI(BotToken)
+	realBot, err := tgbotapi.NewBotAPI(BotToken)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[ERROR] Telegram: %s\n", err)
 		os.Exit(1)
 	}
-	logger.Printf("[INFO] Authorized: %s", Bot.Self.UserName)
+	Bot = realBot
+	botUsername = realBot.Self.UserName
+	logger.Printf("[INFO] Authorized: %s", botUsername)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -243,11 +256,12 @@ func init() {
 // init rTorrent
 func init() {
 	var err error
-	rtorrent, err = rtapi.NewRtorrent(SCGIURL)
+	client, err := rtapi.NewRtorrent(SCGIURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[ERROR] rTorrent: %s\n", err)
 		os.Exit(1)
 	}
+	rtorrent = realRtorrent{client: client}
 }
 
 func main() {
@@ -408,7 +422,7 @@ LenCheck:
 
 // getVersion sends rTorrent/libtorrent version + rtelegram version
 func getVersion() {
-	send(fmt.Sprintf("rTorrent/libtorrent: *%s*\nrtelegram: *%s*", rtorrent.Version, VERSION), true)
+	send(fmt.Sprintf("rTorrent/libtorrent: *%s*\nrtelegram: *%s*", rtorrent.Version(), VERSION), true)
 }
 
 // Check if []string contains string
@@ -420,4 +434,11 @@ func aMaster(name string) bool {
 		}
 	}
 	return false
+}
+
+func runningInTest() bool {
+	if strings.HasSuffix(os.Args[0], ".test") {
+		return true
+	}
+	return flag.Lookup("test.v") != nil
 }
