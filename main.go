@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"testing"
 	"time"
 	"unicode/utf8"
 
@@ -135,6 +136,9 @@ var (
 // init flags
 func init() {
 	var mastersStr string
+	if runningInTest() {
+		testing.Init()
+	}
 	// define arguments and parse them.
 	flag.StringVar(&BotToken, "token", "", "Telegram bot token, Can be passed via environment variable 'RT_TOKEN'")
 	flag.StringVar(&mastersStr, "masters", "", "Comma-seperated Telegram handlers, The bot will only respond to them, Can be passed via environment variable 'RT_MASTERS'")
@@ -151,12 +155,16 @@ func init() {
 		flag.PrintDefaults()
 	}
 
-	flag.Parse()
+	if !runningInTest() {
+		flag.Parse()
+	}
 
 	// if we don't have BotToken passed, check the environment variable "RT_TOKEN"
 	if BotToken == "" {
 		if envVar := os.Getenv("RT_TOKEN"); len(envVar) > 1 {
 			BotToken = envVar
+		} else if runningInTest() {
+			BotToken = "test-token"
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: Telegram Token is missing!\n")
 			flag.Usage()
@@ -168,6 +176,8 @@ func init() {
 	if mastersStr == "" {
 		if envVar := os.Getenv("RT_MASTERS"); len(envVar) > 1 {
 			mastersStr = envVar
+		} else if runningInTest() {
+			mastersStr = "tester"
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: I have no masters!\n")
 			flag.Usage()
@@ -449,4 +459,11 @@ func aMaster(name string) bool {
 		}
 	}
 	return false
+}
+
+func runningInTest() bool {
+	if strings.HasSuffix(os.Args[0], ".test") {
+		return true
+	}
+	return flag.Lookup("test.v") != nil
 }

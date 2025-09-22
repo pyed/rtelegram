@@ -55,7 +55,7 @@ func active() {
 		// do the same loop again
 		for i := range torrents {
 			if torrents[i].DownRate > 0 ||
-				torrents[i].DownRate > 0 {
+				torrents[i].UpRate > 0 {
 				torrentName := mdReplacer.Replace(torrents[i].Name) // replace markdown chars
 				buf.WriteString(fmt.Sprintf("`<%d>` *%s*\n%s *%s* (%s) ↓ *%s*  ↑ *%s* R: *%.2f*\n\n",
 					i, torrentName, torrents[i].State, humanize.IBytes(torrents[i].Completed),
@@ -76,7 +76,7 @@ func active() {
 	buf.Reset()
 	for i := range torrents {
 		if torrents[i].DownRate > 0 ||
-			torrents[i].DownRate > 0 {
+			torrents[i].UpRate > 0 {
 			// escape markdown
 			torrentName := mdReplacer.Replace(torrents[i].Name)
 			buf.WriteString(fmt.Sprintf("`<%d>` *%s*\n%s *%s* (%s) ↓ *-*  ↑ *-* R: *%.2f*\n\n",
