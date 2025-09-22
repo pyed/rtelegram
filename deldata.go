@@ -25,15 +25,21 @@ func deldata(tokens []string) {
 		id, err := strconv.Atoi(i)
 		if err != nil {
 			send(fmt.Sprintf("deldata: %s is not an ID", i), false)
-			return
+			continue
 		}
 
-		if err := rtorrent.Delete(true, torrents[id]); err != nil {
+		if id < 0 || id >= len(torrents) {
+			send(fmt.Sprintf("deldata: ID %d is out of range (0 <= id < %d)", id, len(torrents)), false)
+			continue
+		}
+
+		torrent := torrents[id]
+		if err := rtorrent.Delete(true, torrent); err != nil {
 			logger.Print("deldata:", err)
 			send("deldata: "+err.Error(), false)
 			continue
 		}
 
-		send(fmt.Sprintf("Deleted with data: %s", torrents[id].Name), false)
+		send(fmt.Sprintf("Deleted with data: %s", torrent.Name), false)
 	}
 }
