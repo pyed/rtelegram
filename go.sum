@@ -1,0 +1,14 @@
+github.com/go-telegram-bot-api/telegram-bot-api v4.6.4+incompatible h1:2cauKuaELYAEARXRkq2LrJ0yDDv1rW7+wrTEdVL3uaU=
+github.com/go-telegram-bot-api/telegram-bot-api v4.6.4+incompatible/go.mod h1:qf9acutJ8cwBUhm1bqgz6Bei9/C/c93FPDljKWwsOgM=
+github.com/pyed/go-humanize v0.0.0-20170228161531-259d2a102b87 h1:e27J0FUNDHvK6FVM4/h8UEgnt0Nv22G6S41bHS8alSM=
+github.com/pyed/go-humanize v0.0.0-20170228161531-259d2a102b87/go.mod h1:WQJ1IyqkjlrZYZw89F8oZtTWz3nvIC7WSrvfub6gz/A=
+github.com/pyed/rtapi v0.0.0-20250922191555-7e83be835be9 h1:gtx+uBTP79u6BUKZFZUpQCZ2IcFnPvX4n26fxlSK7sU=
+github.com/pyed/rtapi v0.0.0-20250922191555-7e83be835be9/go.mod h1:PrYBppNdpu3i4Fq7+Dc3wEqgk+xFLUJ8NZ3pzcGcZz8=
+github.com/pyed/tailer v0.0.0-20190130224839-376cd2db7eb6 h1:IfxKk9cYu0O7JQM65yS5NfN2/MFMVp3b8ADnKnmzNTQ=
+github.com/pyed/tailer v0.0.0-20190130224839-376cd2db7eb6/go.mod h1:cqd2XE6+P8ftxqnrxv0DdQq9BwQN1EM80kS7ikCrrO0=
+github.com/technoweenie/multipartstreamer v1.0.1 h1:XRztA5MXiR1TIRHxH2uNxXxaIkKQDeX7m2XsSOlQEnM=
+github.com/technoweenie/multipartstreamer v1.0.1/go.mod h1:jNVxdtShOxzAsukZwTSw6MDx5eUJoiEBsSvzDU9uzog=
+golang.org/x/exp/winfsnotify v0.1.0-deprecated h1:M7lbbgV6cWQoaSqrnFgjMeiK7ufbMPL4EA+up34yZrs=
+golang.org/x/exp/winfsnotify v0.1.0-deprecated/go.mod h1:YHWCUtU1xwIKaVtwKrfr6tEmkeJMN5A2yCcNUNmIdKk=
+gopkg.in/telegram-bot-api.v4 v4.6.4 h1:hpHWhzn4jTCsAJZZ2loNKfy2QWyPDRJVl3aTFXeMW8g=
+gopkg.in/telegram-bot-api.v4 v4.6.4/go.mod h1:5DpGO5dbumb40px+dXcwCpcjmeHNYLpk0bp3XRNvWDM=
