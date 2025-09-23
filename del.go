@@ -25,7 +25,12 @@ func del(tokens []string) {
 		id, err := strconv.Atoi(i)
 		if err != nil {
 			send(fmt.Sprintf("del: %s is not an ID", i), false)
-			return
+			continue
+		}
+
+		if id < 0 || id >= len(torrents) {
+			send(fmt.Sprintf("del: No torrent with an ID of '%d'", id), false)
+			continue
 		}
 
 		if err := rtorrent.Delete(false, torrents[id]); err != nil {
