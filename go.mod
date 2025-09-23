@@ -1,6 +1,6 @@
 module github.com/pyed/rtelegram
 
-go 1.25.1
+go 1.24
 
 require (
 	github.com/pyed/go-humanize v0.0.0-20170228161531-259d2a102b87

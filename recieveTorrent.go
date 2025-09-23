@@ -62,7 +62,7 @@ func receiveTorrent(ud tgbotapi.Update) {
 	// add the .torrent with options
 	if err := rtorrent.DownloadWithOptions(&tFile); err != nil {
 		logger.Print("add with options:", err)
-		send("add with options: %s"+err.Error(), false)
+		send("add with options: "+err.Error(), false)
 	}
 
 	send(fmt.Sprintf("Added: %s", tFile.Name), false)

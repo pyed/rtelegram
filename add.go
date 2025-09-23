@@ -17,14 +17,15 @@ func add(tokens []string, filename string) {
 	for _, url := range tokens {
 		if err := rtorrent.Download(url); err != nil {
 			logger.Print("add:", err)
-			send("add: %s"+err.Error(), false)
+			send("add: "+err.Error(), false)
 			continue
 		}
 
-		if filename == "" {
-			filename = filepath.Base(url)
+		displayName := filename
+		if displayName == "" {
+			displayName = filepath.Base(url)
 		}
 
-		send(fmt.Sprintf("Added: %s", filename), false)
+		send(fmt.Sprintf("Added: %s", displayName), false)
 	}
 }

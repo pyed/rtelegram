@@ -21,6 +21,7 @@ func info(tokens []string) {
 	if err != nil {
 		logger.Print("info:", err)
 		send("info: "+err.Error(), false)
+		return
 	}
 
 	for _, i := range tokens {
@@ -31,7 +32,7 @@ func info(tokens []string) {
 		}
 
 		if id >= len(torrents) || id < 0 {
-			send(fmt.Sprintf("start: No torrent with an ID of '%d'", id), false)
+			send(fmt.Sprintf("info: No torrent with an ID of '%d'", id), false)
 			continue
 		}
 
