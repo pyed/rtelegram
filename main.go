@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -10,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/pyed/rtapi"
-	"github.com/pyed/tailer"
 	tgbotapi "gopkg.in/telegram-bot-api.v4"
 )
 
@@ -192,26 +194,7 @@ func init() {
 
 	// if we got a completed torrents log file, monitor it for torrents completion to notify upon them.
 	if ComLogFile != "" {
-		go func() {
-			ft := tailer.RunFileTailer(ComLogFile, false, nil)
-
-			for {
-				select {
-				case line := <-ft.Lines():
-					// if we don't have a chatID continue
-					if chatID == 0 {
-						continue
-					}
-
-					msg := fmt.Sprintf("Completed: %s", line)
-					send(msg, false)
-				case err := <-ft.Errors():
-					logger.Printf("[ERROR] tailing completed torrents log: %s", err)
-					return
-				}
-
-			}
-		}()
+		go watchCompletedLog(ComLogFile)
 	}
 
 	// log the flags
@@ -404,6 +387,91 @@ LenCheck:
 	}
 
 	return resp.MessageID
+}
+
+func watchCompletedLog(path string) {
+	var (
+		file   *os.File
+		reader *bufio.Reader
+		offset int64
+	)
+
+	reopen := func() error {
+		if file != nil {
+			file.Close()
+			file = nil
+			reader = nil
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+
+		pos, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			f.Close()
+			return err
+		}
+
+		file = f
+		reader = bufio.NewReader(file)
+		offset = pos
+		return nil
+	}
+
+	for {
+		if file == nil {
+			if err := reopen(); err != nil {
+				logger.Printf("[ERROR] tailing completed torrents log: %s", err)
+				time.Sleep(time.Second)
+				continue
+			}
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				time.Sleep(500 * time.Millisecond)
+
+				info, statErr := os.Stat(path)
+				switch {
+				case statErr != nil:
+					file.Close()
+					file = nil
+					reader = nil
+				case info.Size() < offset:
+					if err := reopen(); err != nil {
+						logger.Printf("[ERROR] tailing completed torrents log: %s", err)
+						time.Sleep(time.Second)
+					}
+				}
+
+				continue
+			}
+
+			logger.Printf("[ERROR] tailing completed torrents log: %s", err)
+			file.Close()
+			file = nil
+			reader = nil
+			time.Sleep(time.Second)
+			continue
+		}
+
+		offset += int64(len(line))
+
+		text := strings.TrimSpace(line)
+		if text == "" {
+			continue
+		}
+
+		if chatID == 0 {
+			continue
+		}
+
+		msg := fmt.Sprintf("Completed: %s", text)
+		send(msg, false)
+	}
 }
 
 // getVersion sends rTorrent/libtorrent version + rtelegram version
