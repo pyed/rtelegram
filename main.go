@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"errors"
+	stdErrors "errors"
 	"flag"
 	"fmt"
 	"io"
@@ -431,7 +431,7 @@ func watchCompletedLog(path string) {
 
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if errors.Is(err, io.EOF) {
+			if stdErrors.Is(err, io.EOF) {
 				time.Sleep(500 * time.Millisecond)
 
 				info, statErr := os.Stat(path)
