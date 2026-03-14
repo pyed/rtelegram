@@ -15,6 +15,24 @@ func stats() {
 		return
 	}
 
+	torrents, err := rtorrent.Torrents()
+	if err != nil {
+		logger.Print("stats:", err)
+		send("stats: "+err.Error(), false)
+		return
+	}
+
+	var totalUp, totalDown uint64
+	for i := range torrents {
+		totalUp += torrents[i].UpTotal
+		totalDown += torrents[i].Completed
+	}
+
+	var ratio float64
+	if totalDown > 0 {
+		ratio = float64(totalUp) / float64(totalDown)
+	}
+
 	// show 'off' instead of 0 for throttling
 	var throttleUp, throttleDown string
 	if stats.ThrottleUp == 0 {
@@ -36,9 +54,14 @@ func stats() {
 \[*%s*]
 Total Uploaded: *%s*
 Total Download: *%s*
+
+All-time Upload: *%s*
+All-time Download: *%s*
+Global Ratio: *%.2f*
 		`,
 		throttleUp, throttleDown, stats.Port, stats.Directory,
 		humanize.IBytes(stats.TotalUp), humanize.IBytes(stats.TotalDown),
+		humanize.IBytes(totalUp), humanize.IBytes(totalDown), ratio,
 	)
 
 	send(msg, true)
