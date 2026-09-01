@@ -1,31 +1,34 @@
 version: 2
 project_name: rtelegram
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - id: default
     binary: rtelegram
     main: .
     goos: [windows, darwin, linux]
-    goarch: [amd64, "386"]
+    goarch: [amd64, arm64, "386"]
     ignore:
       - goos: darwin
         goarch: "386"
     env:
       - CGO_ENABLED=0
+      - GOWORK=off
+    flags:
+      - -trimpath
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+      - -s -w -X main.version={{.Version}}
 
 archives:
   - id: default
-    formats: ["zip"]                     # ← was `format: zip`
+    formats: ["zip"]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
 
+release:
+  header: |
+    {{ .TagBody }}
+
 changelog:
-  use: github
+  use: git
