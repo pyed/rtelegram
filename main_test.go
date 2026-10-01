@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -366,64 +371,363 @@ func TestSendRedactsTokenFromErrorsAndLogs(t *testing.T) {
 	}
 }
 
-type fakeRawDownloader struct {
-	data    []byte
-	options *rtapi.DotTorrentWithOptions
-}
-
-func (f *fakeRawDownloader) DownloadRaw(data []byte, options *rtapi.DotTorrentWithOptions) error {
-	f.data = bytes.Clone(data)
-	copy := *options
-	f.options = &copy
-	return nil
-}
-
-type fakeMetadataDeleter struct {
+// fakeRtorrent answers rtapi's SCGI requests from a fixed torrent list, so
+// handlers run against a real *rtapi.Rtorrent. It records each request body.
+type fakeRtorrent struct {
+	t        *testing.T
 	torrents rtapi.Torrents
+	mu       sync.Mutex
+	requests []string
 }
 
-func (f *fakeMetadataDeleter) DeleteMetadata(torrents ...*rtapi.Torrent) error {
-	f.torrents = append(f.torrents, torrents...)
-	return nil
-}
-
-func TestDataDeletionRequiresAcknowledgedMetadataCapability(t *testing.T) {
-	torrent := &rtapi.Torrent{Hash: strings.Repeat("a", 40)}
-	deleter := &fakeMetadataDeleter{}
-	if err := deleteMetadata(deleter, torrent); err != nil {
-		t.Fatal(err)
-	}
-	if len(deleter.torrents) != 1 || deleter.torrents[0] != torrent {
-		t.Fatalf("metadata deletion received %#v", deleter.torrents)
-	}
-	if err := deleteMetadata(struct{}{}, torrent); err == nil {
-		t.Fatal("old rtapi capability was allowed to precede local data removal")
-	}
-}
-
-func TestTelegramUploadDownloadsLocallyWithoutPassingTokenToRtorrent(t *testing.T) {
-	const token = "123:SUPERSECRET"
-	fakeHTTP := &fakeTelegram{file: []byte("data")}
-	app := &application{
-		bot:        newTestBot(t, fakeHTTP, token),
-		httpClient: fakeHTTP,
-		logger:     log.New(io.Discard, "", 0),
-		token:      token,
-	}
-	data, err := app.downloadTelegramFile(context.Background(), "file")
+func newFakeRtorrent(t *testing.T, torrents ...*rtapi.Torrent) (*fakeRtorrent, *rtapi.Rtorrent) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := &fakeRawDownloader{}
-	options := &rtapi.DotTorrentWithOptions{Name: "a.torrent", Dir: "/remote/path", Label: "linux"}
-	if err := downloadRaw(raw, data, options); err != nil {
+	fake := &fakeRtorrent{t: t, torrents: torrents}
+	var connections sync.WaitGroup
+	connections.Add(1)
+	go func() {
+		defer connections.Done()
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connections.Add(1)
+			go func() {
+				defer connections.Done()
+				defer conn.Close()
+				fake.serve(conn)
+			}()
+		}
+	}()
+	t.Cleanup(func() {
+		listener.Close()
+		connections.Wait()
+	})
+	client, err := rtapi.NewRtorrent(listener.Addr().String())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw.data), token) || strings.Contains(raw.options.Link, token) || raw.options.Link != "" {
-		t.Fatalf("token crossed the rtorrent boundary: data=%q link=%q", raw.data, raw.options.Link)
+	return fake, client
+}
+
+func (f *fakeRtorrent) serve(conn net.Conn) {
+	body, err := readSCGIBody(conn)
+	if err != nil {
+		f.t.Errorf("read SCGI request: %v", err)
+		return
 	}
-	if err := downloadRaw(struct{}{}, data, options); err == nil || strings.Contains(err.Error(), token) {
-		t.Fatalf("unsafe old-rtapi fallback error: %v", err)
+	f.mu.Lock()
+	f.requests = append(f.requests, body)
+	f.mu.Unlock()
+	if _, err := io.WriteString(conn, f.respond(body)); err != nil {
+		f.t.Errorf("write SCGI response: %v", err)
+	}
+}
+
+func (f *fakeRtorrent) requestsContaining(text string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var matches []string
+	for _, request := range f.requests {
+		if strings.Contains(request, text) {
+			matches = append(matches, request)
+		}
+	}
+	return matches
+}
+
+func (f *fakeRtorrent) respond(body string) string {
+	switch {
+	case strings.Contains(body, "load.raw_start"):
+		return xmlrpcResponse(xmlrpcInt(0))
+	case strings.Contains(body, "system.client_version"):
+		return xmlrpcResponse(xmlrpcArray(xmlrpcArray(xmlrpcString("0.9.8")), xmlrpcArray(xmlrpcString("0.13.8"))))
+	case strings.Contains(body, "d.multicall2"):
+		rows := make([]string, len(f.torrents))
+		for i, torrent := range f.torrents {
+			multiFile := 0
+			if torrent.MultiFile {
+				multiFile = 1
+			}
+			rows[i] = xmlrpcArray(
+				xmlrpcString(torrent.Name), xmlrpcString(torrent.Hash),
+				xmlrpcInt(0), xmlrpcInt(0), xmlrpcInt(1), xmlrpcInt(1), xmlrpcInt(0), xmlrpcInt(0), xmlrpcInt(0),
+				xmlrpcString(""), xmlrpcString(torrent.Path), xmlrpcInt(0), xmlrpcString(""), xmlrpcInt(1),
+				xmlrpcInt(0), xmlrpcString(""), xmlrpcString(torrent.Directory), xmlrpcInt(multiFile),
+			)
+		}
+		return xmlrpcResponse(xmlrpcArray(rows...))
+	case strings.Contains(body, ">t.url<"):
+		return multicallResults(len(f.torrents), xmlrpcString(""))
+	case strings.Contains(body, ">d.erase<"):
+		return multicallResults(strings.Count(body, ">d.erase<"), xmlrpcInt(0))
+	}
+	f.t.Errorf("unexpected rTorrent request: %s", body)
+	return ""
+}
+
+func readSCGIBody(r io.Reader) (string, error) {
+	reader := bufio.NewReader(r)
+	lengthText, err := reader.ReadString(':')
+	if err != nil {
+		return "", err
+	}
+	length, err := strconv.Atoi(strings.TrimSuffix(lengthText, ":"))
+	if err != nil {
+		return "", err
+	}
+	headers := make([]byte, length+1) // the netstring ends with a comma
+	if _, err := io.ReadFull(reader, headers); err != nil {
+		return "", err
+	}
+	fields := strings.Split(string(headers[:length]), "\x00")
+	if len(fields) < 2 || fields[0] != "CONTENT_LENGTH" {
+		return "", fmt.Errorf("SCGI headers must start with CONTENT_LENGTH: %q", fields)
+	}
+	size, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return "", err
+	}
+	body := make([]byte, size)
+	if _, err := io.ReadFull(reader, body); err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func xmlrpcResponse(value string) string {
+	return "Status: 200 OK\r\nContent-Type: text/xml\r\n\r\n" +
+		`<?xml version="1.0"?><methodResponse><params><param><value>` + value +
+		`</value></param></params></methodResponse>`
+}
+
+func xmlrpcArray(values ...string) string {
+	var body strings.Builder
+	body.WriteString("<array><data>")
+	for _, value := range values {
+		body.WriteString("<value>" + value + "</value>")
+	}
+	body.WriteString("</data></array>")
+	return body.String()
+}
+
+// multicallResults wraps each of count identical results the way
+// system.multicall does.
+func multicallResults(count int, value string) string {
+	results := make([]string, count)
+	for i := range results {
+		results[i] = xmlrpcArray(value)
+	}
+	return xmlrpcResponse(xmlrpcArray(results...))
+}
+
+func xmlrpcString(text string) string {
+	var escaped strings.Builder
+	_ = xml.EscapeText(&escaped, []byte(text))
+	return "<string>" + escaped.String() + "</string>"
+}
+
+func xmlrpcInt(n int) string { return fmt.Sprintf("<i8>%d</i8>", n) }
+
+func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
+	const token = "123:SUPERSECRET"
+	file := []byte("d4:infod4:name4:testee")
+	telegramFake := &fakeTelegram{file: file, sent: make(chan sentMessage, 4)}
+	rtorrentFake, client := newFakeRtorrent(t)
+	app := &application{
+		bot:        newTestBot(t, telegramFake, token),
+		httpClient: telegramFake,
+		rtorrent:   client,
+		logger:     log.New(io.Discard, "", 0),
+		token:      token,
+	}
+	message := &models.Message{
+		Chat:     models.Chat{ID: 111, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "file", FileName: "a.torrent", FileSize: int64(len(file))},
+	}
+	app.receiveTorrent(context.Background(), 111, message, "d=/remote/path linux")
+	expectSent(t, telegramFake.sent, 111, "Added: a.torrent")
+
+	loads := rtorrentFake.requestsContaining("load.raw_start")
+	if len(loads) != 1 {
+		t.Fatalf("got %d load.raw_start requests, want 1", len(loads))
+	}
+	for _, want := range []string{base64.StdEncoding.EncodeToString(file), "/remote/path", "linux"} {
+		if !strings.Contains(loads[0], want) {
+			t.Fatalf("raw load request is missing %q: %s", want, loads[0])
+		}
+	}
+	if leaked := rtorrentFake.requestsContaining(token); len(leaked) != 0 {
+		t.Fatalf("token crossed the rTorrent boundary: %s", leaked[0])
+	}
+}
+
+func TestDeldataRefusesUnknownOrSharedData(t *testing.T) {
+	targetHash := strings.Repeat("A", 40)
+	otherHash := strings.Repeat("B", 40)
+	// Each case returns the loaded torrents, target first. Every path a case
+	// names exists on disk, as real torrent data would.
+	tests := []struct {
+		name     string
+		torrents func(root, show string) rtapi.Torrents
+		reply    string
+		deleted  bool
+	}{
+		{"opened torrent nested in the data", func(root, show string) rtapi.Torrents {
+			return rtapi.Torrents{
+				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "extra", Hash: otherHash, Path: filepath.Join(show, "extra")},
+			}
+		}, "deldata: torrent data overlaps extra", false},
+		{"unopened multi-file cross-seed", func(root, show string) rtapi.Torrents {
+			return rtapi.Torrents{
+				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "show", Hash: otherHash, Directory: show, MultiFile: true},
+			}
+		}, "deldata: torrent data overlaps show", false},
+		{"unopened single-file inside the data", func(root, show string) rtapi.Torrents {
+			return rtapi.Torrents{
+				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "episode.mkv", Hash: otherHash, Directory: show},
+			}
+		}, "deldata: torrent data overlaps episode.mkv", false},
+		{"unopened single-file beside the data", func(root, show string) rtapi.Torrents {
+			return rtapi.Torrents{
+				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "movie.mkv", Hash: otherHash, Directory: root},
+			}
+		}, "Deleted with data: show", true},
+		{"other location unknown", func(root, show string) rtapi.Torrents {
+			return rtapi.Torrents{
+				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "lost", Hash: otherHash},
+			}
+		}, "deldata: rTorrent did not report where lost", false},
+		{"single-file name rewritten by libtorrent", func(root, show string) rtapi.Torrents {
+			return rtapi.Torrents{
+				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "a/b", Hash: otherHash, Directory: root},
+			}
+		}, "deldata: rTorrent did not report where a/b", false},
+		{"unopened target", func(root, show string) rtapi.Torrents {
+			return rtapi.Torrents{{Name: "show", Hash: targetHash, Directory: show, MultiFile: true}}
+		}, "Deleted with data: show", true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			show := filepath.Join(root, "show")
+			if err := os.MkdirAll(filepath.Join(show, "extra"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range []string{filepath.Join(show, "episode.mkv"), filepath.Join(root, "movie.mkv")} {
+				if err := os.WriteFile(file, []byte(file), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rtorrentFake, client := newFakeRtorrent(t, test.torrents(root, show)...)
+			telegramFake := &fakeTelegram{sent: make(chan sentMessage, 4)}
+			app := &application{
+				bot:      newTestBot(t, telegramFake, "123:SECRET"),
+				rtorrent: client,
+				logger:   log.New(io.Discard, "", 0),
+				token:    "123:SECRET",
+				dataRoot: root,
+			}
+			app.deldata(context.Background(), 111, []string{targetHash, "confirm"})
+
+			select {
+			case message := <-telegramFake.sent:
+				if !strings.HasPrefix(message.text, test.reply) {
+					t.Fatalf("reply = %q, want prefix %q", message.text, test.reply)
+				}
+			default:
+				t.Fatal("deldata sent no reply")
+			}
+			erased := len(rtorrentFake.requestsContaining(">d.erase<")) != 0
+			_, err := os.Stat(show)
+			if erased != test.deleted || os.IsNotExist(err) != test.deleted {
+				t.Fatalf("erased=%v data removed=%v, want both %v", erased, os.IsNotExist(err), test.deleted)
+			}
+			if _, err := os.Stat(filepath.Join(root, "movie.mkv")); err != nil {
+				t.Fatalf("sibling data was damaged: %v", err)
+			}
+		})
+	}
+}
+
+// referenceHashPrefixes is the original quadratic definition, kept as an
+// oracle for the sorted implementation.
+func referenceHashPrefixes(torrents rtapi.Torrents) map[string]string {
+	result := make(map[string]string, len(torrents))
+	for _, torrent := range torrents {
+		hash := strings.ToLower(strings.TrimSpace(torrent.Hash))
+		if hash == "" {
+			continue
+		}
+		length := min(7, len(hash))
+		for length < len(hash) {
+			unique := true
+			for _, other := range torrents {
+				if other != torrent && strings.HasPrefix(strings.ToLower(strings.TrimSpace(other.Hash)), hash[:length]) {
+					unique = false
+					break
+				}
+			}
+			if unique {
+				break
+			}
+			length++
+		}
+		result[hash] = hash[:length]
+	}
+	return result
+}
+
+func randomTorrents(count int) rtapi.Torrents {
+	random := rand.New(rand.NewPCG(1, 2))
+	torrents := make(rtapi.Torrents, count)
+	for i := range torrents {
+		hash := fmt.Sprintf("%016X%016X%08X", random.Uint64(), random.Uint64(), random.Uint32())
+		torrents[i] = &rtapi.Torrent{Name: fmt.Sprint("torrent ", i), Hash: hash}
+	}
+	return torrents
+}
+
+func TestHashPrefixesMatchQuadraticReference(t *testing.T) {
+	torrents := randomTorrents(500)
+	random := rand.New(rand.NewPCG(3, 4))
+	for i := 1; i < len(torrents); i += 3 {
+		// Share a 7-12 character prefix with an earlier hash.
+		prefix := torrents[random.IntN(i)].Hash[:7+random.IntN(6)]
+		torrents[i].Hash = prefix + torrents[i].Hash[len(prefix):]
+	}
+	torrents[2].Hash = strings.ToLower(torrents[2].Hash)
+	torrents = append(torrents,
+		&rtapi.Torrent{Hash: torrents[10].Hash},
+		&rtapi.Torrent{Hash: " " + torrents[20].Hash[:12] + " "},
+		&rtapi.Torrent{},
+	)
+	got, want := hashPrefixes(torrents), referenceHashPrefixes(torrents)
+	if len(got) != len(want) {
+		t.Fatalf("got %d prefixes, want %d", len(got), len(want))
+	}
+	for hash, prefix := range want {
+		if got[hash] != prefix {
+			t.Fatalf("prefix for %s = %q, want %q", hash, got[hash], prefix)
+		}
+	}
+}
+
+func BenchmarkHashPrefixes(b *testing.B) {
+	torrents := randomTorrents(5000)
+	for b.Loop() {
+		hashPrefixes(torrents)
 	}
 }
 

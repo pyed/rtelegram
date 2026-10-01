@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,31 +27,37 @@ func formatBytes(bytes uint64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exponent])
 }
 
+// hashPrefixes maps each lowercase hash to its shortest unique prefix of at
+// least seven characters. Once sorted, a hash shares its longest common prefix
+// with a neighbour, so comparing neighbours keeps this O(n log n).
 func hashPrefixes(torrents rtapi.Torrents) map[string]string {
-	result := make(map[string]string, len(torrents))
+	hashes := make([]string, 0, len(torrents))
 	for _, torrent := range torrents {
-		hash := strings.ToLower(strings.TrimSpace(torrent.Hash))
-		if hash == "" {
-			continue
+		if hash := strings.ToLower(strings.TrimSpace(torrent.Hash)); hash != "" {
+			hashes = append(hashes, hash)
 		}
-		length := min(7, len(hash))
-		for length < len(hash) {
-			unique := true
-			for _, other := range torrents {
-				otherHash := strings.ToLower(strings.TrimSpace(other.Hash))
-				if other != torrent && strings.HasPrefix(otherHash, hash[:length]) {
-					unique = false
-					break
-				}
-			}
-			if unique {
-				break
-			}
-			length++
+	}
+	slices.Sort(hashes)
+	result := make(map[string]string, len(hashes))
+	for i, hash := range hashes {
+		length := 7
+		if i > 0 {
+			length = max(length, commonPrefixLength(hash, hashes[i-1])+1)
 		}
-		result[hash] = hash[:length]
+		if i+1 < len(hashes) {
+			length = max(length, commonPrefixLength(hash, hashes[i+1])+1)
+		}
+		result[hash] = hash[:min(length, len(hash))]
 	}
 	return result
+}
+
+func commonPrefixLength(left, right string) int {
+	n := 0
+	for n < len(left) && n < len(right) && left[n] == right[n] {
+		n++
+	}
+	return n
 }
 
 func torrentRef(torrent *rtapi.Torrent, prefixes map[string]string) string {
@@ -157,6 +164,43 @@ func deletionRelative(root, target string) (string, error) {
 		return "", errors.New("torrent data path is not strictly inside the configured data root")
 	}
 	return relative, nil
+}
+
+// dataPath returns where a torrent keeps its data, or "" when rTorrent has not
+// said. d.base_path is only reported once rTorrent opens a torrent, so unopened
+// torrents are located from d.directory. A single-file torrent's file is named
+// after the torrent unless libtorrent had to replace a '/' in the name.
+func dataPath(torrent *rtapi.Torrent) string {
+	switch {
+	case torrent.Path != "":
+		return torrent.Path
+	case torrent.Directory == "":
+		return ""
+	case torrent.MultiFile:
+		return torrent.Directory
+	case torrent.Name == "" || torrent.Name == "." || torrent.Name == ".." || strings.ContainsAny(torrent.Name, `/\`):
+		return ""
+	default:
+		return filepath.Join(torrent.Directory, torrent.Name)
+	}
+}
+
+// sharedDataConflict refuses deletion when another loaded torrent overlaps the
+// target's data, or when rTorrent has not said where another torrent's data is.
+func sharedDataConflict(target *rtapi.Torrent, targetPath string, torrents rtapi.Torrents) error {
+	for _, other := range torrents {
+		if other == target {
+			continue
+		}
+		otherPath := dataPath(other)
+		if !filepath.IsAbs(otherPath) {
+			return fmt.Errorf("rTorrent did not report where %s keeps its data, so it may share this data; metadata was not deleted", other.Name)
+		}
+		if pathsOverlap(targetPath, otherPath) {
+			return fmt.Errorf("torrent data overlaps %s; metadata was not deleted", other.Name)
+		}
+	}
+	return nil
 }
 
 func pathsOverlap(left, right string) bool {

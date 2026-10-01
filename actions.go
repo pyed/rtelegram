@@ -2,25 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/pyed/rtapi"
 )
-
-type metadataDeleter interface {
-	DeleteMetadata(...*rtapi.Torrent) error
-}
-
-func deleteMetadata(target any, torrents ...*rtapi.Torrent) error {
-	deleter, ok := target.(metadataDeleter)
-	if !ok {
-		return errors.New("safe metadata deletion requires a newer rtapi release")
-	}
-	return deleter.DeleteMetadata(torrents...)
-}
 
 func mutationError(action string, count int, err error) string {
 	message := action + ": " + err.Error()
@@ -105,7 +92,7 @@ func (a *application) del(ctx context.Context, chatID int64, references []string
 		a.send(ctx, chatID, "del: "+err.Error())
 		return
 	}
-	if err := a.rtorrent.Delete(false, torrents...); err != nil {
+	if err := a.rtorrent.DeleteMetadata(torrents...); err != nil {
 		a.logger.Printf("del: %s", err)
 		a.send(ctx, chatID, mutationError("del", len(torrents), err))
 		return
@@ -128,19 +115,18 @@ func (a *application) deldata(ctx context.Context, chatID int64, arguments []str
 		a.send(ctx, chatID, "deldata: "+err.Error())
 		return
 	}
-	for _, other := range allTorrents {
-		if other != torrent && pathsOverlap(torrent.Path, other.Path) {
-			a.send(ctx, chatID, "deldata: torrent data overlaps another loaded torrent; metadata was not deleted")
-			return
-		}
-	}
-	root, relative, err := validateTorrentData(a.dataRoot, torrent.Path)
+	targetPath := dataPath(torrent)
+	root, relative, err := validateTorrentData(a.dataRoot, targetPath)
 	if err != nil {
 		a.send(ctx, chatID, "deldata: "+err.Error())
 		return
 	}
 	defer root.Close()
-	if err := deleteMetadata(a.rtorrent, torrent); err != nil {
+	if err := sharedDataConflict(torrent, targetPath, allTorrents); err != nil {
+		a.send(ctx, chatID, "deldata: "+err.Error())
+		return
+	}
+	if err := a.rtorrent.DeleteMetadata(torrent); err != nil {
 		a.logger.Printf("deldata: %s", err)
 		a.send(ctx, chatID, "deldata: "+err.Error())
 		return

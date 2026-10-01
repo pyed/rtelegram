@@ -13,18 +13,6 @@ import (
 	"github.com/pyed/rtapi"
 )
 
-type rawDownloader interface {
-	DownloadRaw(data []byte, options *rtapi.DotTorrentWithOptions) error
-}
-
-func downloadRaw(target any, data []byte, options *rtapi.DotTorrentWithOptions) error {
-	downloader, ok := target.(rawDownloader)
-	if !ok {
-		return errors.New("raw torrent uploads require a newer rtapi release")
-	}
-	return downloader.DownloadRaw(data, options)
-}
-
 func (a *application) receiveTorrent(ctx context.Context, chatID int64, message *models.Message, caption string) {
 	if message == nil || message.Document == nil {
 		return
@@ -41,7 +29,7 @@ func (a *application) receiveTorrent(ctx context.Context, chatID int64, message 
 	}
 	directory, label := processOptions(caption)
 	options := &rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: label}
-	if err := downloadRaw(a.rtorrent, data, options); err != nil {
+	if err := a.rtorrent.DownloadRaw(data, options); err != nil {
 		a.logger.Printf("add uploaded torrent: %s", redact(a.token, err.Error()))
 		a.send(ctx, chatID, "receiver: "+redact(a.token, err.Error()))
 		return

@@ -50,9 +50,12 @@ topic. Private-chat document captions remain download-directory/label options.
 
 `deldata HASH confirm` is intentionally stricter than ordinary deletion. It is
 disabled without `-data-root`, rejects roots, parents, symlink targets, and paths
-that overlap another loaded torrent, requires an acknowledged metadata deletion,
-and then removes the contained local path. If local removal fails after metadata
-erasure, the bot reports that partial outcome explicitly.
+that overlap another loaded torrent, and refuses whenever rTorrent has not
+reported where another torrent keeps its data. rTorrent reports `d.base_path`
+only for torrents it has opened, so unopened torrents are located through
+`d.directory`. It then requires an acknowledged metadata deletion and removes
+the contained local path. If local removal fails after metadata erasure, the bot
+reports that partial outcome explicitly.
 
 rTorrent multicalls are not transactional. If a batched start, stop, check, or
 metadata deletion fails, the bot warns that some selected torrents may already
@@ -79,12 +82,10 @@ The parent workspace contains both repositories and binds them with `go.work`:
 go test ./rtapi/... ./rtelegram/...
 ```
 
-Each repository remains independently testable with `GOWORK=off`. The
-`rtelegram` module deliberately retains the latest published `rtapi` version
-until the sibling library changes have an immutable release. Before tagging a
-new `rtelegram` release, publish `rtapi`, update the `rtapi` requirement in
-`rtelegram/go.mod`, run `go mod tidy`, and repeat both standalone and workspace
-checks. The release configuration builds with `GOWORK=off` so a package can never
-silently use an unpublished sibling checkout. Until that release-order step is
-complete, standalone source builds fail closed with clear unsupported errors for
-raw torrent uploads and `deldata`; do not tag rtelegram before updating the pin.
+Each repository remains independently testable with `GOWORK=off`. When
+rtelegram uses an `rtapi` change that has not been released yet, the workspace
+build passes but the standalone build fails until that change is published.
+Before tagging a new `rtelegram` release, tag `rtapi`, update the `rtapi`
+requirement in `rtelegram/go.mod`, run `go mod tidy`, and repeat both standalone
+and workspace checks. The release configuration builds with `GOWORK=off` so a
+release can never silently use an unpublished sibling checkout.

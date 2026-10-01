@@ -342,20 +342,8 @@ func (a *application) count(ctx context.Context, chatID int64) {
 		counts[rtapi.Leeching], counts[rtapi.Seeding], counts[rtapi.Complete], counts[rtapi.Stopped], counts[rtapi.Hashing], counts[rtapi.Error], len(torrents)))
 }
 
-type speedReporter interface {
-	SpeedsWithError() (down, up uint64, err error)
-}
-
-func currentSpeeds(target *rtapi.Rtorrent) (uint64, uint64, error) {
-	if reporter, ok := any(target).(speedReporter); ok {
-		return reporter.SpeedsWithError()
-	}
-	down, up := target.Speeds()
-	return down, up, nil
-}
-
 func (a *application) speed(ctx context.Context, chatID int64) {
-	down, up, err := currentSpeeds(a.rtorrent)
+	down, up, err := a.rtorrent.SpeedsWithError()
 	if err != nil {
 		a.send(ctx, chatID, "speed: "+err.Error())
 		return
@@ -370,7 +358,7 @@ func (a *application) speed(ctx context.Context, chatID int64) {
 			if !a.wait(liveCtx) {
 				return
 			}
-			down, up, err := currentSpeeds(a.rtorrent)
+			down, up, err := a.rtorrent.SpeedsWithError()
 			if err != nil {
 				a.edit(liveCtx, chatID, messageID, "speed: "+err.Error())
 				return
