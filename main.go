@@ -75,6 +75,7 @@ type config struct {
 	notifyChatID    int64
 	dataRoot        string
 	downloadRoot    string
+	statePath       string
 	noLive          bool
 	showVersion     bool
 	legacyUsernames []string
@@ -105,8 +106,7 @@ type application struct {
 	addTimeout      time.Duration
 	addPollInterval time.Duration
 
-	sortMu    sync.RWMutex
-	sorts     map[int64]rtapi.Sorting
+	state     *state
 	ignoredMu sync.Mutex
 	ignored   map[int64]struct{}
 	wg        sync.WaitGroup
@@ -131,6 +131,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	if cfg.showVersion {
 		_, err := fmt.Fprintln(stdout, version)
+		return err
+	}
+
+	appState, err := loadState(cfg.statePath)
+	if err != nil {
 		return err
 	}
 
@@ -195,7 +200,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		duration:        defaultLiveUpdates,
 		addTimeout:      defaultAddTimeout,
 		addPollInterval: time.Second,
-		sorts:           make(map[int64]rtapi.Sorting),
+		state:           appState,
 	}
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
 	if cfg.completedLog != "" {
@@ -221,6 +226,7 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs.Int64Var(&cfg.notifyChatID, "notify-chat-id", 0, "Chat ID for completion notifications")
 	fs.StringVar(&cfg.dataRoot, "data-root", "", "Absolute local root allowed for deldata")
 	fs.StringVar(&cfg.downloadRoot, "download-root", "", "Absolute rTorrent directory that upload captions may choose download directories under (default: rTorrent's default directory)")
+	fs.StringVar(&cfg.statePath, "state", "", "File where rtelegram keeps settings such as sort orders (default: rtelegram/state.json in the user's config directory)")
 	fs.BoolVar(&cfg.noLive, "no-live", false, "Do not edit messages with live updates")
 	fs.BoolVar(&cfg.showVersion, "version", false, "Print the rtelegram version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -252,6 +258,11 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	}
 	if strings.TrimSpace(cfg.rtorrentAddress) == "" {
 		cfg.rtorrentAddress = defaultRtorrentAddress
+	}
+	if cfg.statePath == "" {
+		if cfg.statePath, err = defaultStatePath(); err != nil {
+			return config{}, err
+		}
 	}
 	if cfg.maxResponseMiB < 1 || cfg.maxResponseMiB > 1<<16 {
 		return config{}, errors.New("-max-response-mib must be between 1 and 65536")

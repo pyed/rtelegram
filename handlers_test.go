@@ -114,7 +114,7 @@ func TestCommandHandlers(t *testing.T) {
 				bot: newTestBot(t, telegramFake, "123:SECRET"), rtorrent: client,
 				logger: log.New(io.Discard, "", 0), token: "123:SECRET",
 				masters: principals{ids: map[int64]struct{}{7: {}}}, botUsername: "ThisBot",
-				noLive: true, sorts: make(map[int64]rtapi.Sorting),
+				noLive: true, state: &state{},
 			}
 			for _, command := range test.commands {
 				app.handle(context.Background(), &models.Update{Message: &models.Message{
@@ -187,7 +187,7 @@ func TestLiveUpdatesEditTheReply(t *testing.T) {
 	app := &application{
 		bot: newTestBot(t, telegramFake, "123:SECRET"), rtorrent: client,
 		logger: log.New(io.Discard, "", 0), token: "123:SECRET",
-		interval: 50 * time.Millisecond, duration: 2, sorts: make(map[int64]rtapi.Sorting),
+		interval: 50 * time.Millisecond, duration: 2, state: &state{},
 	}
 	app.speed(context.Background(), 111)
 	expectSent(t, telegramFake.sent, 111, "↓ 2.0 KiB ↑ 1.0 KiB")

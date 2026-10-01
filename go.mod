@@ -1,4 +1,4 @@
-module github.com/pyed/rtelegram/v2
+module github.com/pyed/rtelegram/v3
 
 go 1.26.0
 

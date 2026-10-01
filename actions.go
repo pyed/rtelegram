@@ -297,10 +297,18 @@ func (a *application) sort(ctx context.Context, chatID int64, arguments []string
 	if reverse {
 		sorting, direction = orders[1], "reversed "
 	}
-	a.sortMu.Lock()
-	a.sorts[chatID] = sorting
-	a.sortMu.Unlock()
-	a.send(ctx, chatID, "sort: by "+direction+key)
+	reply := "sort: by " + direction + key
+	err := a.state.update(func(data *stateData) {
+		if data.Sorts == nil {
+			data.Sorts = make(map[int64]rtapi.Sorting)
+		}
+		data.Sorts[chatID] = sorting
+	})
+	if err != nil {
+		a.logger.Printf("[ERROR] sort: %s", err)
+		reply += " (not saved, so a restart will forget it: " + err.Error() + ")"
+	}
+	a.send(ctx, chatID, reply)
 }
 
 // sortings maps the sort command's keys to rtapi's ascending and descending

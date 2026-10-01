@@ -77,6 +77,12 @@ func TestParseConfigAddressAndLimits(t *testing.T) {
 			t.Errorf("parseConfig(%v, RT_URL=%q) = %q, %d, %v, %v", test.args, test.rtURL, cfg.rtorrentAddress, cfg.maxResponseMiB, cfg.addStopped, err)
 		}
 	}
+	if cfg, err := parse(""); err != nil || !strings.HasSuffix(cfg.statePath, filepath.Join("rtelegram", "state.json")) {
+		t.Errorf("default state path = %q, %v", cfg.statePath, err)
+	}
+	if cfg, err := parse("", "-state", "/var/lib/rtelegram/state.json"); err != nil || cfg.statePath != "/var/lib/rtelegram/state.json" {
+		t.Errorf("-state = %q, %v", cfg.statePath, err)
+	}
 	for _, args := range [][]string{
 		{"-max-response-mib", "0"}, {"-max-response-mib", "65537"}, {"-download-root", "relative"},
 	} {

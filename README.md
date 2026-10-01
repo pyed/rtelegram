@@ -11,7 +11,7 @@ Download a binary from the
 1.26 or newer:
 
 ```sh
-go install github.com/pyed/rtelegram/v2@latest
+go install github.com/pyed/rtelegram/v3@latest
 ```
 
 ## Set up
@@ -160,7 +160,7 @@ reports that partial outcome explicitly.
 
 ## Upgrading from v1
 
-- Install from `github.com/pyed/rtelegram/v2`.
+- Install from `github.com/pyed/rtelegram/v3`.
 - Torrents are referenced by hash prefix, not by their position in a list.
 - Prefer numeric user IDs in `RT_MASTERS`. `/whoami` shows yours.
 - `-completed-torrents-logfile` now requires `-notify-chat-id`. v1 sent

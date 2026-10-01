@@ -175,9 +175,8 @@ func (a *application) torrents(ctx context.Context, chatID int64) (rtapi.Torrent
 	if err != nil {
 		return nil, err
 	}
-	a.sortMu.RLock()
-	sorting := a.sorts[chatID]
-	a.sortMu.RUnlock()
+	var sorting rtapi.Sorting
+	a.state.read(func(data *stateData) { sorting = data.Sorts[chatID] })
 	torrents.Sort(sorting)
 	return torrents, nil
 }
