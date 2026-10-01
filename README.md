@@ -86,7 +86,7 @@ brackets, such as `<1c60cbe>`.
 | `trackers` | `tr` | Count torrents per tracker |
 | `search QUERY` | `se` | List torrents whose name contains QUERY |
 | `latest [n]` | `la` | List the n most recently added torrents |
-| `add URL...` | `ad` | Add torrents from URLs or magnet links |
+| `add URL...` | `ad` | Add torrents from URLs or magnet links, and confirm rTorrent loaded them |
 | `info HASH...` | `in` | Show details, with live updates |
 | `start`, `stop`, `check` `HASH...\|all` | `st`, `sp`, `ck` | Start, stop, or verify torrents |
 | `del HASH...` | | Remove torrents from rTorrent and keep their data |
@@ -100,6 +100,10 @@ set the download directory and label, as `d=/path` and `l=label`. In a group,
 the file needs `/add` as its caption. Files are limited to 16 MiB. The bot
 downloads the file inside the Telegram trust boundary and passes raw bytes to
 rTorrent, so the bot token is never embedded in an SCGI request.
+
+The bot replies `Added:` only once the torrent appears in rTorrent, and says so
+when it is already loaded. rTorrent fetches links in the background; if nothing
+appears within 15 seconds, the bot reports that instead.
 
 Group commands must start with `/`, and replies to commands in forum topics stay
 in the same topic.

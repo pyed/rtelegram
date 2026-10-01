@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/base32"
+	"encoding/hex"
 	"fmt"
-	"path/filepath"
+	"net/url"
+	"path"
 	"strings"
+	"time"
 
 	"github.com/pyed/rtapi"
 )
@@ -17,23 +21,154 @@ func mutationError(action string, count int, err error) string {
 	return message
 }
 
-func (a *application) add(ctx context.Context, chatID int64, sources []string, filename string) {
+func (a *application) add(ctx context.Context, chatID int64, sources []string) {
 	if len(sources) == 0 {
 		a.send(ctx, chatID, "add: needs at least one URL")
 		return
 	}
-	for _, source := range sources {
-		if err := a.rtorrent.Download(source); err != nil {
-			a.logger.Printf("add: %s", err)
-			a.send(ctx, chatID, "add: "+err.Error())
+	// Confirming a link can take a while, so it happens off the update loop.
+	// Links are handled in order so that a new torrent is not credited to the
+	// wrong link.
+	a.launch(ctx, func(addCtx context.Context) {
+		for _, source := range sources {
+			a.addSource(addCtx, chatID, source)
+		}
+	})
+}
+
+func (a *application) addSource(ctx context.Context, chatID int64, source string) {
+	hash, name := magnetInfo(source)
+	if name == "" {
+		name = sourceName(source)
+	}
+	before, err := a.loadedHashes()
+	if err != nil {
+		a.send(ctx, chatID, "add: "+err.Error())
+		return
+	}
+	if before[hash] {
+		a.send(ctx, chatID, "add: "+name+" is already loaded")
+		return
+	}
+	if err := a.rtorrent.Download(source); err != nil {
+		a.logger.Printf("add: %s", err)
+		a.send(ctx, chatID, "add: "+err.Error())
+		return
+	}
+	a.confirmAdded(ctx, chatID, "add", name, hash, before)
+}
+
+func (a *application) loadedHashes() (map[string]bool, error) {
+	torrents, err := a.rtorrent.Torrents()
+	if err != nil {
+		return nil, err
+	}
+	hashes := make(map[string]bool, len(torrents))
+	for _, torrent := range torrents {
+		hashes[strings.ToUpper(torrent.Hash)] = true
+	}
+	return hashes, nil
+}
+
+// confirmAdded reports the torrent rTorrent loaded for a request, or that none
+// appeared. rTorrent acknowledges links before it fetches or parses them, so
+// the acknowledgement alone does not mean anything was added.
+func (a *application) confirmAdded(ctx context.Context, chatID int64, label, name, hash string, before map[string]bool) {
+	deadline := time.Now().Add(a.addTimeout)
+	var lastErr error
+	for {
+		torrents, err := a.rtorrent.Torrents()
+		lastErr = err
+		if err == nil {
+			if added := findAdded(torrents, hash, before); added != nil {
+				a.send(ctx, chatID, fmt.Sprintf("Added: <%s> %s", torrentRef(added, hashPrefixes(torrents)), added.Name))
+				return
+			}
+		}
+		if !time.Now().Before(deadline) || !waitFor(ctx, a.addPollInterval) {
+			break
+		}
+	}
+	switch {
+	case ctx.Err() != nil:
+	case lastErr != nil:
+		a.send(ctx, chatID, label+": "+lastErr.Error())
+	default:
+		a.send(ctx, chatID, fmt.Sprintf("%s: rTorrent did not load %s within %s; the link or file may be invalid, or rTorrent may still be fetching it",
+			label, name, a.addTimeout))
+	}
+}
+
+// findAdded returns the torrent with hash or, when the hash is not known in
+// advance, the newest torrent that was not loaded before.
+func findAdded(torrents rtapi.Torrents, hash string, before map[string]bool) *rtapi.Torrent {
+	var newest *rtapi.Torrent
+	for _, torrent := range torrents {
+		current := strings.ToUpper(torrent.Hash)
+		if hash != "" {
+			if current == hash {
+				return torrent
+			}
 			continue
 		}
-		name := filename
-		if name == "" {
-			name = filepath.Base(source)
+		if !before[current] && (newest == nil || torrent.Age > newest.Age) {
+			newest = torrent
 		}
-		a.send(ctx, chatID, "Added: "+name)
 	}
+	return newest
+}
+
+// magnetInfo returns the upper-case info-hash and display name of a magnet
+// link. The hash is empty when source is not a magnet link with a BitTorrent v1
+// info-hash, and the name is empty when source is not a magnet link at all.
+func magnetInfo(source string) (hash, name string) {
+	link, err := url.Parse(source)
+	if err != nil || !strings.EqualFold(link.Scheme, "magnet") {
+		return "", ""
+	}
+	query := link.Query()
+	for _, topic := range query["xt"] {
+		value, ok := strings.CutPrefix(strings.ToLower(topic), "urn:btih:")
+		if !ok {
+			continue
+		}
+		var raw []byte
+		switch len(value) {
+		case 40:
+			raw, err = hex.DecodeString(value)
+		case 32:
+			raw, err = base32.StdEncoding.DecodeString(strings.ToUpper(value))
+		default:
+			continue
+		}
+		if err == nil && len(raw) == 20 {
+			hash = strings.ToUpper(hex.EncodeToString(raw))
+			break
+		}
+	}
+	name = query.Get("dn")
+	switch {
+	case name != "":
+	case hash != "":
+		name = "magnet " + strings.ToLower(hash[:7])
+	default:
+		name = "magnet link"
+	}
+	return hash, name
+}
+
+// sourceName names a link in replies without echoing its query string, which
+// often holds a tracker passkey.
+func sourceName(source string) string {
+	if link, err := url.Parse(source); err == nil && link.Scheme != "" {
+		if base := path.Base(link.Path); base != "." && base != "/" {
+			return base
+		}
+		if link.Host != "" {
+			return link.Host
+		}
+	}
+	return path.Base(source)
 }
 
 func (a *application) selected(chatID int64, references []string, allowAll bool) (rtapi.Torrents, error) {

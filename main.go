@@ -44,6 +44,7 @@ const (
 	defaultSCGIURL      = "localhost:5000"
 	defaultLiveInterval = 3 * time.Second
 	defaultLiveUpdates  = 5
+	defaultAddTimeout   = 15 * time.Second
 	maxTelegramMessage  = 4096
 	maxTorrentFileSize  = 16 << 20
 	// Replies longer than this many messages are attached as a text file.
@@ -97,6 +98,9 @@ type application struct {
 	noLive       bool
 	interval     time.Duration
 	duration     int
+	// addTimeout bounds how long an add waits for rTorrent to load the torrent.
+	addTimeout      time.Duration
+	addPollInterval time.Duration
 
 	sortMu    sync.RWMutex
 	sorts     map[int64]sortPreference
@@ -171,19 +175,21 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 
 	app = &application{
-		bot:          b,
-		rtorrent:     rtorrent,
-		httpClient:   httpClient,
-		logger:       logger,
-		token:        cfg.token,
-		botUsername:  me.Username,
-		masters:      cfg.masters,
-		notifyChatID: cfg.notifyChatID,
-		dataRoot:     cfg.dataRoot,
-		noLive:       cfg.noLive,
-		interval:     defaultLiveInterval,
-		duration:     defaultLiveUpdates,
-		sorts:        make(map[int64]sortPreference),
+		bot:             b,
+		rtorrent:        rtorrent,
+		httpClient:      httpClient,
+		logger:          logger,
+		token:           cfg.token,
+		botUsername:     me.Username,
+		masters:         cfg.masters,
+		notifyChatID:    cfg.notifyChatID,
+		dataRoot:        cfg.dataRoot,
+		noLive:          cfg.noLive,
+		interval:        defaultLiveInterval,
+		duration:        defaultLiveUpdates,
+		addTimeout:      defaultAddTimeout,
+		addPollInterval: time.Second,
+		sorts:           make(map[int64]sortPreference),
 	}
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, cfg.scgiURL)
 	if cfg.completedLog != "" {
@@ -378,7 +384,7 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 	case "trackers", "tr":
 		a.trackers(ctx, chatID)
 	case "add", "ad":
-		a.add(ctx, chatID, args, "")
+		a.add(ctx, chatID, args)
 	case "search", "se":
 		a.search(ctx, chatID, args)
 	case "latest", "la":

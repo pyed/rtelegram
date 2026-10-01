@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/base32"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -497,9 +500,18 @@ func TestSendRedactsTokenFromErrorsAndLogs(t *testing.T) {
 // handlers run against a real *rtapi.Rtorrent. It records each request body.
 type fakeRtorrent struct {
 	t        *testing.T
-	torrents rtapi.Torrents
 	mu       sync.Mutex
+	torrents rtapi.Torrents
 	requests []string
+	load     func(body string) *rtapi.Torrent
+}
+
+// onLoad sets the torrent the fake loads for each load request; without it,
+// load requests are acknowledged but nothing is loaded.
+func (f *fakeRtorrent) onLoad(load func(body string) *rtapi.Torrent) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.load = load
 }
 
 func newFakeRtorrent(t *testing.T, torrents ...*rtapi.Torrent) (*fakeRtorrent, *rtapi.Rtorrent) {
@@ -564,8 +576,15 @@ func (f *fakeRtorrent) requestsContaining(text string) []string {
 }
 
 func (f *fakeRtorrent) respond(body string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	switch {
-	case strings.Contains(body, "load.raw_start"):
+	case strings.Contains(body, "load.raw_start"), strings.Contains(body, "<methodName>load.start</methodName>"):
+		if f.load != nil {
+			if torrent := f.load(body); torrent != nil {
+				f.torrents = append(f.torrents, torrent)
+			}
+		}
 		return xmlrpcResponse(xmlrpcInt(0))
 	case strings.Contains(body, "system.client_version"):
 		return xmlrpcResponse(xmlrpcArray(xmlrpcArray(xmlrpcString("0.9.8")), xmlrpcArray(xmlrpcString("0.13.8"))))
@@ -578,7 +597,7 @@ func (f *fakeRtorrent) respond(body string) string {
 			}
 			rows[i] = xmlrpcArray(
 				xmlrpcString(torrent.Name), xmlrpcString(torrent.Hash),
-				xmlrpcInt(0), xmlrpcInt(0), xmlrpcInt(1), xmlrpcInt(1), xmlrpcInt(0), xmlrpcInt(0), xmlrpcInt(0),
+				xmlrpcInt(0), xmlrpcInt(0), xmlrpcInt(1), xmlrpcInt(1), xmlrpcInt(0), xmlrpcInt(0), xmlrpcInt(int(torrent.Age)),
 				xmlrpcString(""), xmlrpcString(torrent.Path), xmlrpcInt(0), xmlrpcString(""), xmlrpcInt(1),
 				xmlrpcInt(0), xmlrpcString(""), xmlrpcString(torrent.Directory), xmlrpcInt(multiFile),
 			)
@@ -661,6 +680,9 @@ func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 	file := []byte("d4:infod4:name4:testee")
 	telegramFake := &fakeTelegram{file: file, sent: make(chan sentMessage, 4)}
 	rtorrentFake, client := newFakeRtorrent(t)
+	info := sha1.Sum([]byte("d4:name4:teste"))
+	hash := strings.ToUpper(hex.EncodeToString(info[:]))
+	rtorrentFake.onLoad(func(string) *rtapi.Torrent { return &rtapi.Torrent{Name: "test", Hash: hash} })
 	app := &application{
 		bot:        newTestBot(t, telegramFake, token),
 		httpClient: telegramFake,
@@ -673,7 +695,8 @@ func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 		Document: &models.Document{FileID: "file", FileName: "a.torrent", FileSize: int64(len(file))},
 	}
 	app.receiveTorrent(context.Background(), 111, message, "d=/remote/path linux")
-	expectSent(t, telegramFake.sent, 111, "Added: a.torrent")
+	expectSent(t, telegramFake.sent, 111, "Added: <"+strings.ToLower(hash[:7])+"> test")
+	app.wg.Wait()
 
 	loads := rtorrentFake.requestsContaining("load.raw_start")
 	if len(loads) != 1 {
@@ -686,6 +709,117 @@ func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 	}
 	if leaked := rtorrentFake.requestsContaining(token); len(leaked) != 0 {
 		t.Fatalf("token crossed the rTorrent boundary: %s", leaked[0])
+	}
+}
+
+func TestUploadRejectsInvalidTorrentFiles(t *testing.T) {
+	telegramFake := &fakeTelegram{file: []byte("<html>not a torrent</html>"), sent: make(chan sentMessage, 4)}
+	rtorrentFake, client := newFakeRtorrent(t)
+	app := &application{
+		bot: newTestBot(t, telegramFake, "123:SECRET"), httpClient: telegramFake, rtorrent: client,
+		logger: log.New(io.Discard, "", 0), token: "123:SECRET",
+	}
+	message := &models.Message{
+		Chat:     models.Chat{ID: 111, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "file", FileName: "bad.torrent", FileSize: 26},
+	}
+	app.receiveTorrent(context.Background(), 111, message, "")
+	expectSent(t, telegramFake.sent, 111, "receiver: bad.torrent is not a valid torrent file: not a bencoded dictionary")
+	if loads := rtorrentFake.requestsContaining("load.raw_start"); len(loads) != 0 {
+		t.Fatal("an invalid file was sent to rTorrent")
+	}
+}
+
+func TestTorrentInfoHashHashesTheInfoDictionary(t *testing.T) {
+	info := "d6:lengthi5e4:name5:a.txt12:piece lengthi16384e6:pieces20:" + strings.Repeat("x", 20) + "e"
+	sum := sha1.Sum([]byte(info))
+	want := strings.ToUpper(hex.EncodeToString(sum[:]))
+	if got, err := torrentInfoHash([]byte("d8:announce20:udp://tracker:80/ann4:info" + info + "e")); err != nil || got != want {
+		t.Fatalf("torrentInfoHash = %q, %v; want %q", got, err, want)
+	}
+	for _, bad := range []string{
+		"", "not a torrent", "d8:announce", "d4:infoi1ee", "d4:infod4:name", "d99:info",
+		"d4:info" + strings.Repeat("l", 100) + strings.Repeat("e", 100) + "e",
+	} {
+		if hash, err := torrentInfoHash([]byte(bad)); err == nil {
+			t.Fatalf("torrentInfoHash(%q) = %q, want an error", bad, hash)
+		}
+	}
+}
+
+func TestMagnetInfo(t *testing.T) {
+	const hash = "1C60CBECF4C632EDC7AB546623454B33A295CCEA"
+	raw, _ := hex.DecodeString(hash)
+	tests := []struct{ source, hash, name string }{
+		{"magnet:?xt=urn:btih:" + strings.ToLower(hash) + "&dn=Debian+12&tr=udp%3A%2F%2Ftracker", hash, "Debian 12"},
+		{"magnet:?xt=urn:btih:" + base32.StdEncoding.EncodeToString(raw), hash, "magnet 1c60cbe"},
+		{"MAGNET:?dn=v2+only&xt=urn:btmh:1220" + strings.Repeat("ab", 32), "", "v2 only"},
+		{"magnet:?xt=urn:btih:nothex", "", "magnet link"},
+		{"https://tracker.example/a.torrent?passkey=secret", "", ""},
+	}
+	for _, test := range tests {
+		if hash, name := magnetInfo(test.source); hash != test.hash || name != test.name {
+			t.Errorf("magnetInfo(%q) = %q, %q; want %q, %q", test.source, hash, name, test.hash, test.name)
+		}
+	}
+}
+
+func TestSourceNameOmitsQueryStrings(t *testing.T) {
+	for source, want := range map[string]string{
+		"https://tracker.example/download/linux.torrent?passkey=secret": "linux.torrent",
+		"https://tracker.example/?id=1&passkey=secret":                  "tracker.example",
+		"/home/user/watch/local.torrent":                                "local.torrent",
+	} {
+		if got := sourceName(source); got != want {
+			t.Errorf("sourceName(%q) = %q, want %q", source, got, want)
+		}
+	}
+}
+
+func TestAddConfirmsWhatRtorrentLoaded(t *testing.T) {
+	const magnetHash = "1C60CBECF4C632EDC7AB546623454B33A295CCEA"
+	magnet := "magnet:?xt=urn:btih:" + magnetHash + "&dn=Debian+12"
+	link := "https://tracker.example/dl/linux.torrent?passkey=secret"
+	tests := []struct {
+		name    string
+		source  string
+		loaded  rtapi.Torrents
+		loads   *rtapi.Torrent
+		reply   string
+		request bool
+	}{
+		{"magnet appears", magnet, nil, &rtapi.Torrent{Name: "Debian 12", Hash: magnetHash},
+			"Added: <1c60cbe> Debian 12", true},
+		{"magnet already loaded", magnet, rtapi.Torrents{{Name: "Debian 12", Hash: magnetHash}}, nil,
+			"add: Debian 12 is already loaded", false},
+		{"link appears", link, nil, &rtapi.Torrent{Name: "linux", Hash: strings.Repeat("B", 40)},
+			"Added: <bbbbbbb> linux", true},
+		{"nothing appears", link, nil, nil,
+			"add: rTorrent did not load linux.torrent within 0s", true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rtorrentFake, client := newFakeRtorrent(t, test.loaded...)
+			rtorrentFake.onLoad(func(string) *rtapi.Torrent { return test.loads })
+			telegramFake := &fakeTelegram{sent: make(chan sentMessage, 4)}
+			app := &application{
+				bot: newTestBot(t, telegramFake, "123:SECRET"), rtorrent: client,
+				logger: log.New(io.Discard, "", 0), token: "123:SECRET",
+			}
+			app.add(context.Background(), 111, []string{test.source})
+			select {
+			case message := <-telegramFake.sent:
+				if !strings.HasPrefix(message.text, test.reply) || strings.Contains(message.text, "secret") {
+					t.Fatalf("reply = %q, want prefix %q without the passkey", message.text, test.reply)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("add sent no reply")
+			}
+			app.wg.Wait()
+			if requested := len(rtorrentFake.requestsContaining("<methodName>load.start</methodName>")) != 0; requested != test.request {
+				t.Fatalf("load requested = %v, want %v", requested, test.request)
+			}
+		})
 	}
 }
 
