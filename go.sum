@@ -1,4 +1,4 @@
 github.com/go-telegram/bot v1.27.0 h1:PG9yBDzM8O26oUerE9SZwWlHon4RpH8WcNslZ7CEZmE=
 github.com/go-telegram/bot v1.27.0/go.mod h1:i2TRs7fXWIeaceF3z7KzsMt/he0TwkVC680mvdTFYeM=
-github.com/pyed/rtapi v1.0.0 h1:pBHqlCiGiQAi8czuelygIbmyTP0ljgOWZv1I8HOxRZ0=
-github.com/pyed/rtapi v1.0.0/go.mod h1:ZVaEEGwDASPd7XLFsLHeRa7Hqe2uGV2L2cLaRg9jqVg=
+github.com/pyed/rtapi v1.0.1-0.20261001232854-6608c805bcb4 h1:UJnmkDNFWR1mYXZGFNQacMuM6Mb+AcXY0wNe/BLlof0=
+github.com/pyed/rtapi v1.0.1-0.20261001232854-6608c805bcb4/go.mod h1:ZVaEEGwDASPd7XLFsLHeRa7Hqe2uGV2L2cLaRg9jqVg=

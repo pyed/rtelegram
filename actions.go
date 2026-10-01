@@ -70,15 +70,15 @@ func (a *application) addLink(ctx context.Context, chatID int64, label, source, 
 }
 
 func (a *application) loadedHashes(ctx context.Context) (map[string]bool, error) {
-	torrents, err := a.rtorrent.TorrentsContext(ctx)
+	hashes, err := a.rtorrent.HashesContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	hashes := make(map[string]bool, len(torrents))
-	for _, torrent := range torrents {
-		hashes[strings.ToUpper(torrent.Hash)] = true
+	loaded := make(map[string]bool, len(hashes))
+	for _, hash := range hashes {
+		loaded[strings.ToUpper(hash)] = true
 	}
-	return hashes, nil
+	return loaded, nil
 }
 
 // confirmAdded reports the torrent rTorrent loaded for a request, or that none
@@ -88,13 +88,11 @@ func (a *application) confirmAdded(ctx context.Context, chatID int64, label, nam
 	deadline := time.Now().Add(a.addTimeout)
 	var lastErr error
 	for {
-		torrents, err := a.rtorrent.TorrentsContext(ctx)
+		added, hashes, err := a.findAdded(ctx, hash, before)
 		lastErr = err
-		if err == nil {
-			if added := findAdded(torrents, hash, before); added != nil {
-				a.send(ctx, chatID, fmt.Sprintf("Added: <%s> %s", torrentRef(added, hashPrefixes(torrents)), added.Name))
-				return
-			}
+		if added != nil {
+			a.send(ctx, chatID, fmt.Sprintf("Added: <%s> %s", torrentRef(added, prefixesOf(hashes)), added.Name))
+			return
 		}
 		if !time.Now().Before(deadline) || !waitFor(ctx, a.addPollInterval) {
 			break
@@ -111,22 +109,32 @@ func (a *application) confirmAdded(ctx context.Context, chatID int64, label, nam
 }
 
 // findAdded returns the torrent with hash or, when the hash is not known in
-// advance, the newest torrent that was not loaded before.
-func findAdded(torrents rtapi.Torrents, hash string, before map[string]bool) *rtapi.Torrent {
+// advance, the newest torrent that was not loaded before; nil if there is none
+// yet. It also returns the hashes of every loaded torrent. Listing hashes and
+// then fetching only the new torrent keeps polling cheap in large libraries.
+func (a *application) findAdded(ctx context.Context, hash string, before map[string]bool) (*rtapi.Torrent, []string, error) {
+	hashes, err := a.rtorrent.HashesContext(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	var newest *rtapi.Torrent
-	for _, torrent := range torrents {
-		current := strings.ToUpper(torrent.Hash)
-		if hash != "" {
-			if current == hash {
-				return torrent
-			}
+	for _, current := range hashes {
+		upper := strings.ToUpper(current)
+		if (hash != "" && upper != hash) || (hash == "" && before[upper]) {
 			continue
 		}
-		if !before[current] && (newest == nil || torrent.Age > newest.Age) {
+		torrent, err := a.rtorrent.GetTorrentContext(ctx, current)
+		if err != nil {
+			return nil, nil, err
+		}
+		if hash != "" {
+			return torrent, hashes, nil
+		}
+		if newest == nil || torrent.Age > newest.Age {
 			newest = torrent
 		}
 	}
-	return newest
+	return newest, hashes, nil
 }
 
 // magnetInfo returns the upper-case info-hash and display name of a magnet
@@ -259,6 +267,9 @@ func (a *application) deldata(ctx context.Context, chatID int64, arguments []str
 			return
 		}
 		torrents, err := a.selected(ctx, chatID, arguments, false)
+		if err == nil {
+			err = a.rtorrent.TrackersContext(ctx, torrents)
+		}
 		if err != nil {
 			a.send(ctx, chatID, "deldata: "+err.Error())
 			return

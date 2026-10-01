@@ -117,6 +117,10 @@ func (f *fakeRtorrent) called(methods ...string) [][]string {
 	return matches
 }
 
+func (f *fakeRtorrent) countCalls(method string) int {
+	return len(f.called(method))
+}
+
 func (f *fakeRtorrent) loadCalls() [][]string {
 	return f.called("load.start", "load.start_verbose", "load.normal", "load.verbose",
 		"load.raw", "load.raw_start", "load.raw_verbose", "load.raw_start_verbose")

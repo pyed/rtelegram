@@ -131,6 +131,11 @@ func (a *application) listTorrents(ctx context.Context, chatID int64, spec listS
 	}
 	prefixes := hashPrefixes(torrents)
 	kind := listKinds[spec.kind]
+	if spec.kind == "list" && spec.query != "" {
+		if err := a.rtorrent.TrackersContext(ctx, torrents); err != nil {
+			return nil, nil, err
+		}
+	}
 	if kind.keep == nil {
 		torrents = slices.Clone(torrents)
 		slices.SortStableFunc(torrents, func(x, y *rtapi.Torrent) int { return cmp.Compare(y.Age, x.Age) })

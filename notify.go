@@ -70,7 +70,7 @@ func (a *application) watchEvents(ctx context.Context) {
 // checkEvents compares rTorrent with the previous check and notifies
 // subscribed chats of what changed.
 func (a *application) checkEvents(ctx context.Context, w *watcher, now time.Time) {
-	torrents, err := a.rtorrent.TorrentsContext(ctx)
+	torrents, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
 	if err != nil {
 		if ctx.Err() == nil && err.Error() != w.lastError {
 			a.logger.Printf("[ERROR] watching rTorrent: %s", err)

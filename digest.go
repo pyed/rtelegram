@@ -148,7 +148,7 @@ func (a *application) checkDigest(ctx context.Context, now time.Time) {
 // transferred since the previous digest, and the state of things now. It
 // returns rTorrent's session totals for the next digest to compare with.
 func (a *application) buildDigest(ctx context.Context, now time.Time, settings digestSettings) (string, [2]uint64, error) {
-	torrents, err := a.rtorrent.TorrentsContext(ctx)
+	torrents, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
 	if err != nil {
 		return "", [2]uint64{}, err
 	}

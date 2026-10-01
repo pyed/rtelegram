@@ -175,8 +175,10 @@ func (a *application) getVersion(ctx context.Context, chatID int64) {
 	a.send(ctx, chatID, fmt.Sprintf("rTorrent/libtorrent: %s\nrtelegram: %s", a.rtorrent.Version, version))
 }
 
+// torrents lists every torrent in chatID's sort order, without trackers:
+// fetching them is a call per torrent, which large libraries feel.
 func (a *application) torrents(ctx context.Context, chatID int64) (rtapi.Torrents, error) {
-	torrents, err := a.rtorrent.TorrentsContext(ctx)
+	torrents, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

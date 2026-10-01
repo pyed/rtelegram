@@ -156,6 +156,9 @@ func (a *application) paused(ctx context.Context, chatID int64) {
 // info sends a card with buttons for each torrent.
 func (a *application) info(ctx context.Context, chatID int64, references []string) {
 	torrents, err := a.selected(ctx, chatID, references, false)
+	if err == nil {
+		err = a.rtorrent.TrackersContext(ctx, torrents)
+	}
 	if err != nil {
 		a.send(ctx, chatID, "info: "+err.Error())
 		return
@@ -167,6 +170,9 @@ func (a *application) info(ctx context.Context, chatID int64, references []strin
 
 func (a *application) trackers(ctx context.Context, chatID int64) {
 	torrents, err := a.torrents(ctx, chatID)
+	if err == nil {
+		err = a.rtorrent.TrackersContext(ctx, torrents)
+	}
 	if err != nil {
 		a.send(ctx, chatID, "trackers: "+err.Error())
 		return

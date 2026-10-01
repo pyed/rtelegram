@@ -31,9 +31,19 @@ func formatBytes(bytes uint64) string {
 // least seven characters. Once sorted, a hash shares its longest common prefix
 // with a neighbour, so comparing neighbours keeps this O(n log n).
 func hashPrefixes(torrents rtapi.Torrents) map[string]string {
-	hashes := make([]string, 0, len(torrents))
-	for _, torrent := range torrents {
-		if hash := strings.ToLower(strings.TrimSpace(torrent.Hash)); hash != "" {
+	hashes := make([]string, len(torrents))
+	for i, torrent := range torrents {
+		hashes[i] = torrent.Hash
+	}
+	return prefixesOf(hashes)
+}
+
+// prefixesOf maps each of hashes, in lower case, to its shortest unique prefix
+// of at least seven characters.
+func prefixesOf(all []string) map[string]string {
+	hashes := make([]string, 0, len(all))
+	for _, hash := range all {
+		if hash = strings.ToLower(strings.TrimSpace(hash)); hash != "" {
 			hashes = append(hashes, hash)
 		}
 	}
