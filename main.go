@@ -38,6 +38,7 @@ add (ad) URL..., info (in) HASH..., files (fi) HASH, get HASH [N]
 stop (sp), start (st), check (ck) HASH...|all
 del HASH..., deldata HASH [confirm]
 stats (sa), speed (ss), count (co), notify [on|off], whoami, help, version
+limit [down N] [up N]|off, quiet HH:MM-HH:MM down N [up N]|off
 
 Torrent references are the stable hash prefixes shown by list commands.
 In groups, commands must start with /.`
@@ -100,7 +101,8 @@ type application struct {
 	masters       principals
 	watchInterval time.Duration
 	stallAfter    time.Duration
-	lowDisk       uint64 // warn below this many free bytes; 0 disables
+	lowDisk       uint64           // warn below this many free bytes; 0 disables
+	now           func() time.Time // the clock; nil means time.Now
 	dataRoot      string
 	downloadRoot  string
 	addStopped    bool
@@ -212,6 +214,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
 	app.launch(ctx, app.watchEvents)
+	app.launch(ctx, app.watchQuiet)
 	b.Start(ctx)
 	app.wg.Wait()
 	return nil
@@ -470,6 +473,10 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.files(ctx, chatID, args)
 	case "get":
 		a.get(ctx, chatID, args)
+	case "limit":
+		a.limit(ctx, chatID, args)
+	case "quiet":
+		a.quiet(ctx, chatID, args)
 	case "notify":
 		a.notify(ctx, chatID, args)
 	case "whoami":

@@ -20,6 +20,14 @@ func (a *application) launch(ctx context.Context, fn func(context.Context)) {
 	}()
 }
 
+// clock returns the current time; tests replace it with a.now.
+func (a *application) clock() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
+}
+
 func (a *application) wait(ctx context.Context) bool {
 	return waitFor(ctx, a.interval)
 }

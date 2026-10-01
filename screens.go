@@ -40,6 +40,7 @@ type screen struct {
 	parent  *screen   // the list page a card was opened from
 	notify  bool      // the /notify settings
 	files   string    // the torrent whose files are shown
+	limits  bool      // the /limit presets
 }
 
 // screenStore remembers the most recent screens, forgetting the oldest
@@ -357,6 +358,11 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 			break
 		}
 		return a.pressGet(ctx, key, scr, arg)
+	case "lm":
+		if !scr.limits {
+			break
+		}
+		return a.pressLimit(ctx, key, arg)
 	case "n":
 		next := *scr
 		next.confirm = ""

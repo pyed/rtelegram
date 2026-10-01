@@ -25,6 +25,8 @@ type stateData struct {
 	// the watcher has not looked yet, so existing torrents are not announced.
 	CompletedWatermark uint64   `json:"completedWatermark,omitempty"`
 	CompletedAt        []string `json:"completedAt,omitempty"`
+	// Quiet holds the quiet hours schedule, if any.
+	Quiet *quietHours `json:"quiet,omitempty"`
 }
 
 type notifySettings struct {

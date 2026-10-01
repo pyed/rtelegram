@@ -122,6 +122,8 @@ brackets, such as `<1c60cbe>`.
 | `deldata HASH [confirm]` | | Remove a torrent and its data, after asking (see below) |
 | `stats`, `speed`, `count` | `sa`, `ss`, `co` | Show totals, current speeds, or torrents per state |
 | `notify [on\|off]` | | Choose which notifications this chat gets |
+| `limit [down N] [up N]\|off` | | Show or set the global speed limits |
+| `quiet HH:MM-HH:MM down N [up N]\|off` | | Lower the limits every night |
 | `whoami` | | Show your user ID and this chat's ID |
 | `help`, `version` | | |
 
@@ -161,6 +163,19 @@ finished files up to 50 MB (Telegram's limit for bots) get a 📥 button that
 sends the file to the chat, and `/get HASH N` sends file N. A single-file
 torrent needs no N. Files are read only from inside `-data-root`, and symbolic
 links cannot lead outside it.
+
+## Speed limits
+
+`/limit` shows rTorrent's global download and upload limits with buttons for
+common values. `/limit down 5M up 1M` sets them (either half can be left
+out), and `/limit off` removes them. Rates are per second, in binary units.
+
+`/quiet 23:00-07:00 down 2M` lowers the limits between those times every day,
+for example while others at home are streaming. Give `down`, `up`, or both;
+the other limit stays as it is. When quiet hours end, the limits go back to
+what they were, or to whatever `/limit` set during quiet hours. Windows can
+cross midnight, times are in the bot's time zone, and quiet hours survive a
+restart. `/quiet` shows the schedule and `/quiet off` removes it.
 
 ## Notifications
 
