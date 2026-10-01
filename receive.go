@@ -32,18 +32,8 @@ func (a *application) receiveTorrent(ctx context.Context, chatID int64, message 
 		a.send(ctx, chatID, "receiver: "+redact(a.token, err.Error()))
 		return
 	}
-	hash, err := torrentInfoHash(data)
-	if err != nil {
+	if _, err := torrentInfoHash(data); err != nil {
 		a.send(ctx, chatID, fmt.Sprintf("receiver: %s is not a valid torrent file: %s", document.FileName, err))
-		return
-	}
-	before, err := a.loadedHashes(ctx)
-	if err != nil {
-		a.send(ctx, chatID, "receiver: "+err.Error())
-		return
-	}
-	if before[hash] {
-		a.send(ctx, chatID, "receiver: "+document.FileName+" is already loaded")
 		return
 	}
 	directory, label := processOptions(caption)
@@ -51,15 +41,37 @@ func (a *application) receiveTorrent(ctx context.Context, chatID int64, message 
 		a.send(ctx, chatID, "receiver: "+err.Error())
 		return
 	}
-	options := &rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: label, Stopped: a.addStopped}
-	if err := a.rtorrent.DownloadRawContext(ctx, data, options); err != nil {
-		a.logger.Printf("add uploaded torrent: %s", redact(a.token, err.Error()))
-		a.send(ctx, chatID, "receiver: "+redact(a.token, err.Error()))
-		return
+	options := rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: label}
+	if failure := a.addData(ctx, chatID, "receiver", document.FileName, data, options); failure != "" {
+		a.send(ctx, chatID, failure)
+	}
+}
+
+// addData loads a .torrent file's bytes into rTorrent, then confirms in the
+// background that the torrent appeared. It returns a reply for failures before
+// loading, prefixed with label, or "" once loading has begun.
+func (a *application) addData(ctx context.Context, chatID int64, label, name string, data []byte, options rtapi.DotTorrentWithOptions) string {
+	hash, err := torrentInfoHash(data)
+	if err != nil {
+		return fmt.Sprintf("%s: %s is not a valid torrent file: %s", label, name, err)
+	}
+	before, err := a.loadedHashes(ctx)
+	if err != nil {
+		return label + ": " + err.Error()
+	}
+	if before[hash] {
+		return label + ": " + name + " is already loaded"
+	}
+	options.Stopped = a.addStopped
+	if err := a.rtorrent.DownloadRawContext(ctx, data, &options); err != nil {
+		clean := redact(a.token, err.Error())
+		a.logger.Printf("%s: %s", label, clean)
+		return label + ": " + clean
 	}
 	a.launch(ctx, func(confirmCtx context.Context) {
-		a.confirmAdded(confirmCtx, chatID, "receiver", document.FileName, hash, before)
+		a.confirmAdded(confirmCtx, chatID, label, name, hash, before)
 	})
+	return ""
 }
 
 // torrentInfoHash returns the upper-case hex SHA-1 of a .torrent file's info

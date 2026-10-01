@@ -37,25 +37,36 @@ func (a *application) add(ctx context.Context, chatID int64, sources []string) {
 }
 
 func (a *application) addSource(ctx context.Context, chatID int64, source string) {
-	hash, name := magnetInfo(source)
+	a.addLink(ctx, chatID, "add", source, "", rtapi.DotTorrentWithOptions{})
+}
+
+// addLink loads a URL or magnet link into rTorrent and reports, prefixed with
+// label, whether the torrent appeared. name, when given, is used in replies
+// instead of a name taken from the link.
+func (a *application) addLink(ctx context.Context, chatID int64, label, source, name string, options rtapi.DotTorrentWithOptions) {
+	hash, magnetName := magnetInfo(source)
+	if name == "" {
+		name = magnetName
+	}
 	if name == "" {
 		name = sourceName(source)
 	}
 	before, err := a.loadedHashes(ctx)
 	if err != nil {
-		a.send(ctx, chatID, "add: "+err.Error())
+		a.send(ctx, chatID, label+": "+err.Error())
 		return
 	}
 	if before[hash] {
-		a.send(ctx, chatID, "add: "+name+" is already loaded")
+		a.send(ctx, chatID, label+": "+name+" is already loaded")
 		return
 	}
-	if err := a.rtorrent.DownloadWithOptionsContext(ctx, &rtapi.DotTorrentWithOptions{Link: source, Stopped: a.addStopped}); err != nil {
-		a.logger.Printf("add: %s", err)
-		a.send(ctx, chatID, "add: "+err.Error())
+	options.Link, options.Stopped = source, a.addStopped
+	if err := a.rtorrent.DownloadWithOptionsContext(ctx, &options); err != nil {
+		a.logger.Printf("%s: %s", label, err)
+		a.send(ctx, chatID, label+": "+err.Error())
 		return
 	}
-	a.confirmAdded(ctx, chatID, "add", name, hash, before)
+	a.confirmAdded(ctx, chatID, label, name, hash, before)
 }
 
 func (a *application) loadedHashes(ctx context.Context) (map[string]bool, error) {

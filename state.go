@@ -27,6 +27,8 @@ type stateData struct {
 	CompletedAt        []string `json:"completedAt,omitempty"`
 	// Quiet holds the quiet hours schedule, if any.
 	Quiet *quietHours `json:"quiet,omitempty"`
+	// Watch holds the rules that add new search results automatically.
+	Watch []watchRule `json:"watch,omitempty"`
 }
 
 type notifySettings struct {

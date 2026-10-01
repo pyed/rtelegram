@@ -72,6 +72,9 @@ Key flags:
   Credentials in a URL are sent with HTTP basic authentication and hidden in
   logs.
 - `-add-stopped` adds torrents without starting them.
+- `-indexer-url` and `-indexer-key` (or `RT_INDEXER_URL` and `RT_INDEXER_KEY`)
+  point `find` and `watch` at a Torznab endpoint, and `-feed-interval` is how
+  often watch rules search (default 15m).
 - `-max-response-mib` is the largest rTorrent response the bot accepts
   (default 16). Raise it if listing a very large library fails.
 - `-logfile` writes operational logs to a private file.
@@ -124,6 +127,8 @@ brackets, such as `<1c60cbe>`.
 | `notify [on\|off]` | | Choose which notifications this chat gets |
 | `limit [down N] [up N]\|off` | | Show or set the global speed limits |
 | `quiet HH:MM-HH:MM down N [up N]\|off` | | Lower the limits every night |
+| `find QUERY` | | Search an indexer and add a result with a tap |
+| `watch [add NAME QUERY\|del NAME]` | | Add new releases for a search automatically |
 | `whoami` | | Show your user ID and this chat's ID |
 | `help`, `version` | | |
 
@@ -163,6 +168,23 @@ finished files up to 50 MB (Telegram's limit for bots) get a 📥 button that
 sends the file to the chat, and `/get HASH N` sends file N. A single-file
 torrent needs no N. Files are read only from inside `-data-root`, and symbolic
 links cannot lead outside it.
+
+## Find and watch
+
+With an indexer configured, `/find QUERY` searches it and shows the eight
+results with the most seeders as buttons; tap one to add it. The indexer is any
+Torznab endpoint, such as one Prowlarr indexer
+(`http://prowlarr:9696/1/api`) or all of Jackett's
+(`http://jackett:9117/api/v2.0/indexers/all/results/torznab/api`), with its API
+key in `RT_INDEXER_KEY`. Magnet links go to rTorrent directly; the bot
+downloads `.torrent` files from the indexer itself, so the key never reaches
+rTorrent. Adds are confirmed as with `add`.
+
+`/watch add NAME QUERY [l=LABEL] [d=DIR]` adds new releases for a search as
+they appear, checking every `-feed-interval`. Releases already there when the
+rule is made are skipped, at most five are added per check, and each is
+announced in the chat that made the rule. `/watch` lists the rules and
+`/watch del NAME` removes one.
 
 ## Speed limits
 

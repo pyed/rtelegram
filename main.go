@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -39,6 +40,7 @@ stop (sp), start (st), check (ck) HASH...|all
 del HASH..., deldata HASH [confirm]
 stats (sa), speed (ss), count (co), notify [on|off], whoami, help, version
 limit [down N] [up N]|off, quiet HH:MM-HH:MM down N [up N]|off
+find QUERY, watch [add NAME QUERY|del NAME]
 
 Torrent references are the stable hash prefixes shown by list commands.
 In groups, commands must start with /.`
@@ -77,6 +79,9 @@ type config struct {
 	watchInterval   time.Duration
 	stallAfter      time.Duration
 	lowDisk         uint64
+	indexerURL      string
+	indexerKey      string
+	feedInterval    time.Duration
 	dataRoot        string
 	downloadRoot    string
 	statePath       string
@@ -103,6 +108,8 @@ type application struct {
 	stallAfter    time.Duration
 	lowDisk       uint64           // warn below this many free bytes; 0 disables
 	now           func() time.Time // the clock; nil means time.Now
+	indexer       *indexer         // nil without -indexer-url
+	feedInterval  time.Duration
 	dataRoot      string
 	downloadRoot  string
 	addStopped    bool
@@ -202,6 +209,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		watchInterval:   cfg.watchInterval,
 		stallAfter:      cfg.stallAfter,
 		lowDisk:         cfg.lowDisk,
+		feedInterval:    cfg.feedInterval,
 		dataRoot:        cfg.dataRoot,
 		downloadRoot:    cfg.downloadRoot,
 		addStopped:      cfg.addStopped,
@@ -215,6 +223,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
 	app.launch(ctx, app.watchEvents)
 	app.launch(ctx, app.watchQuiet)
+	if cfg.indexerURL != "" {
+		app.indexer = newIndexer(cfg.indexerURL, cfg.indexerKey)
+		logger.Printf("[INFO] Indexer: %s", indexerName(cfg.indexerURL))
+		app.launch(ctx, app.watchFeeds)
+	}
 	b.Start(ctx)
 	app.wg.Wait()
 	return nil
@@ -236,6 +249,9 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs.DurationVar(&cfg.watchInterval, "watch-interval", defaultWatchInterval, "How often to check rTorrent for notifications")
 	fs.DurationVar(&cfg.stallAfter, "stall-after", defaultStallAfter, "Report a download as stalled after this long without progress (0 disables)")
 	lowDisk := fs.String("low-disk", "5G", "Report low disk space below this much free space where rTorrent saves data (0 disables)")
+	fs.StringVar(&cfg.indexerURL, "indexer-url", "", "Torznab endpoint of Prowlarr or Jackett, for find and watch (or RT_INDEXER_URL)")
+	fs.StringVar(&cfg.indexerKey, "indexer-key", "", "API key of the indexer (or RT_INDEXER_KEY)")
+	fs.DurationVar(&cfg.feedInterval, "feed-interval", defaultFeedInterval, "How often watch rules search for new releases")
 	fs.StringVar(&cfg.dataRoot, "data-root", "", "Absolute local root allowed for deldata")
 	fs.StringVar(&cfg.downloadRoot, "download-root", "", "Absolute rTorrent directory that upload captions may choose download directories under (default: rTorrent's default directory)")
 	fs.StringVar(&cfg.statePath, "state", "", "File where rtelegram keeps settings such as sort orders (default: rtelegram/state.json in the user's config directory)")
@@ -290,6 +306,16 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	}
 	if cfg.lowDisk, err = parseSize(*lowDisk); err != nil {
 		return config{}, fmt.Errorf("-low-disk: %w", err)
+	}
+	cfg.indexerURL = cmp.Or(cfg.indexerURL, getenv("RT_INDEXER_URL"))
+	cfg.indexerKey = cmp.Or(cfg.indexerKey, getenv("RT_INDEXER_KEY"))
+	if cfg.indexerURL != "" {
+		if parsed, err := url.Parse(cfg.indexerURL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return config{}, errors.New("-indexer-url must be an http:// or https:// URL")
+		}
+	}
+	if cfg.feedInterval < 5*time.Minute {
+		return config{}, errors.New("-feed-interval must be at least 5m")
 	}
 	if cfg.dataRoot != "" {
 		if !filepath.IsAbs(cfg.dataRoot) {
@@ -477,6 +503,10 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.limit(ctx, chatID, args)
 	case "quiet":
 		a.quiet(ctx, chatID, args)
+	case "find":
+		a.find(ctx, chatID, args)
+	case "watch":
+		a.watch(ctx, chatID, args)
 	case "notify":
 		a.notify(ctx, chatID, args)
 	case "whoami":

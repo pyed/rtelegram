@@ -33,14 +33,15 @@ type screenKey struct {
 
 // A screen is a paged torrent list or a torrent card.
 type screen struct {
-	list    *listSpec // a paged list
-	page    int       // the list page shown
-	hash    string    // the torrent a card shows
-	confirm string    // "del" or "deldata" while a card asks for confirmation
-	parent  *screen   // the list page a card was opened from
-	notify  bool      // the /notify settings
-	files   string    // the torrent whose files are shown
-	limits  bool      // the /limit presets
+	list    *listSpec      // a paged list
+	page    int            // the list page shown
+	hash    string         // the torrent a card shows
+	confirm string         // "del" or "deldata" while a card asks for confirmation
+	parent  *screen        // the list page a card was opened from
+	notify  bool           // the /notify settings
+	files   string         // the torrent whose files are shown
+	limits  bool           // the /limit presets
+	results []searchResult // /find results
 }
 
 // screenStore remembers the most recent screens, forgetting the oldest
@@ -363,6 +364,11 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 			break
 		}
 		return a.pressLimit(ctx, key, arg)
+	case "fd":
+		if scr.results == nil {
+			break
+		}
+		return a.pressFind(ctx, key, scr, arg)
 	case "n":
 		next := *scr
 		next.confirm = ""
