@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -69,6 +70,7 @@ type config struct {
 	completedLog    string
 	notifyChatID    int64
 	dataRoot        string
+	downloadRoot    string
 	noLive          bool
 	showVersion     bool
 	legacyUsernames []string
@@ -95,6 +97,7 @@ type application struct {
 	masters      principals
 	notifyChatID int64
 	dataRoot     string
+	downloadRoot string
 	noLive       bool
 	interval     time.Duration
 	duration     int
@@ -184,6 +187,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		masters:         cfg.masters,
 		notifyChatID:    cfg.notifyChatID,
 		dataRoot:        cfg.dataRoot,
+		downloadRoot:    cfg.downloadRoot,
 		noLive:          cfg.noLive,
 		interval:        defaultLiveInterval,
 		duration:        defaultLiveUpdates,
@@ -212,6 +216,7 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs.StringVar(&cfg.completedLog, "completed-torrents-logfile", "", "Watch an rTorrent completion log")
 	fs.Int64Var(&cfg.notifyChatID, "notify-chat-id", 0, "Chat ID for completion notifications")
 	fs.StringVar(&cfg.dataRoot, "data-root", "", "Absolute local root allowed for deldata")
+	fs.StringVar(&cfg.downloadRoot, "download-root", "", "Absolute rTorrent directory that upload captions may choose download directories under (default: rTorrent's default directory)")
 	fs.BoolVar(&cfg.noLive, "no-live", false, "Do not edit messages with live updates")
 	fs.BoolVar(&cfg.showVersion, "version", false, "Print the rtelegram version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -246,6 +251,14 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 			return config{}, errors.New("-data-root must be an absolute path")
 		}
 		cfg.dataRoot = filepath.Clean(cfg.dataRoot)
+	}
+	if cfg.downloadRoot != "" {
+		// rTorrent interprets download directories on its own host, so this is
+		// a slash-separated path whatever the local OS.
+		if !path.IsAbs(cfg.downloadRoot) {
+			return config{}, errors.New("-download-root must be an absolute path")
+		}
+		cfg.downloadRoot = path.Clean(cfg.downloadRoot)
 	}
 	return cfg, nil
 }

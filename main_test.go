@@ -1,24 +1,22 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand/v2"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -496,185 +494,6 @@ func TestSendRedactsTokenFromErrorsAndLogs(t *testing.T) {
 	}
 }
 
-// fakeRtorrent answers rtapi's SCGI requests from a fixed torrent list, so
-// handlers run against a real *rtapi.Rtorrent. It records each request body.
-type fakeRtorrent struct {
-	t        *testing.T
-	mu       sync.Mutex
-	torrents rtapi.Torrents
-	requests []string
-	load     func(body string) *rtapi.Torrent
-}
-
-// onLoad sets the torrent the fake loads for each load request; without it,
-// load requests are acknowledged but nothing is loaded.
-func (f *fakeRtorrent) onLoad(load func(body string) *rtapi.Torrent) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.load = load
-}
-
-func newFakeRtorrent(t *testing.T, torrents ...*rtapi.Torrent) (*fakeRtorrent, *rtapi.Rtorrent) {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fake := &fakeRtorrent{t: t, torrents: torrents}
-	var connections sync.WaitGroup
-	connections.Add(1)
-	go func() {
-		defer connections.Done()
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			connections.Add(1)
-			go func() {
-				defer connections.Done()
-				defer conn.Close()
-				fake.serve(conn)
-			}()
-		}
-	}()
-	t.Cleanup(func() {
-		listener.Close()
-		connections.Wait()
-	})
-	client, err := rtapi.NewRtorrent(listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return fake, client
-}
-
-func (f *fakeRtorrent) serve(conn net.Conn) {
-	body, err := readSCGIBody(conn)
-	if err != nil {
-		f.t.Errorf("read SCGI request: %v", err)
-		return
-	}
-	f.mu.Lock()
-	f.requests = append(f.requests, body)
-	f.mu.Unlock()
-	if _, err := io.WriteString(conn, f.respond(body)); err != nil {
-		f.t.Errorf("write SCGI response: %v", err)
-	}
-}
-
-func (f *fakeRtorrent) requestsContaining(text string) []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var matches []string
-	for _, request := range f.requests {
-		if strings.Contains(request, text) {
-			matches = append(matches, request)
-		}
-	}
-	return matches
-}
-
-func (f *fakeRtorrent) respond(body string) string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	switch {
-	case strings.Contains(body, "load.raw_start"), strings.Contains(body, "<methodName>load.start</methodName>"):
-		if f.load != nil {
-			if torrent := f.load(body); torrent != nil {
-				f.torrents = append(f.torrents, torrent)
-			}
-		}
-		return xmlrpcResponse(xmlrpcInt(0))
-	case strings.Contains(body, "system.client_version"):
-		return xmlrpcResponse(xmlrpcArray(xmlrpcArray(xmlrpcString("0.9.8")), xmlrpcArray(xmlrpcString("0.13.8"))))
-	case strings.Contains(body, "d.multicall2"):
-		rows := make([]string, len(f.torrents))
-		for i, torrent := range f.torrents {
-			multiFile := 0
-			if torrent.MultiFile {
-				multiFile = 1
-			}
-			rows[i] = xmlrpcArray(
-				xmlrpcString(torrent.Name), xmlrpcString(torrent.Hash),
-				xmlrpcInt(0), xmlrpcInt(0), xmlrpcInt(1), xmlrpcInt(1), xmlrpcInt(0), xmlrpcInt(0), xmlrpcInt(int(torrent.Age)),
-				xmlrpcString(""), xmlrpcString(torrent.Path), xmlrpcInt(0), xmlrpcString(""), xmlrpcInt(1),
-				xmlrpcInt(0), xmlrpcString(""), xmlrpcString(torrent.Directory), xmlrpcInt(multiFile),
-			)
-		}
-		return xmlrpcResponse(xmlrpcArray(rows...))
-	case strings.Contains(body, ">t.url<"):
-		return multicallResults(len(f.torrents), xmlrpcString(""))
-	case strings.Contains(body, ">d.erase<"):
-		return multicallResults(strings.Count(body, ">d.erase<"), xmlrpcInt(0))
-	}
-	f.t.Errorf("unexpected rTorrent request: %s", body)
-	return ""
-}
-
-func readSCGIBody(r io.Reader) (string, error) {
-	reader := bufio.NewReader(r)
-	lengthText, err := reader.ReadString(':')
-	if err != nil {
-		return "", err
-	}
-	length, err := strconv.Atoi(strings.TrimSuffix(lengthText, ":"))
-	if err != nil {
-		return "", err
-	}
-	headers := make([]byte, length+1) // the netstring ends with a comma
-	if _, err := io.ReadFull(reader, headers); err != nil {
-		return "", err
-	}
-	fields := strings.Split(string(headers[:length]), "\x00")
-	if len(fields) < 2 || fields[0] != "CONTENT_LENGTH" {
-		return "", fmt.Errorf("SCGI headers must start with CONTENT_LENGTH: %q", fields)
-	}
-	size, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return "", err
-	}
-	body := make([]byte, size)
-	if _, err := io.ReadFull(reader, body); err != nil {
-		return "", err
-	}
-	return string(body), nil
-}
-
-func xmlrpcResponse(value string) string {
-	return "Status: 200 OK\r\nContent-Type: text/xml\r\n\r\n" +
-		`<?xml version="1.0"?><methodResponse><params><param><value>` + value +
-		`</value></param></params></methodResponse>`
-}
-
-func xmlrpcArray(values ...string) string {
-	var body strings.Builder
-	body.WriteString("<array><data>")
-	for _, value := range values {
-		body.WriteString("<value>" + value + "</value>")
-	}
-	body.WriteString("</data></array>")
-	return body.String()
-}
-
-// multicallResults wraps each of count identical results the way
-// system.multicall does.
-func multicallResults(count int, value string) string {
-	results := make([]string, count)
-	for i := range results {
-		results[i] = xmlrpcArray(value)
-	}
-	return xmlrpcResponse(xmlrpcArray(results...))
-}
-
-func xmlrpcString(text string) string {
-	var escaped strings.Builder
-	_ = xml.EscapeText(&escaped, []byte(text))
-	return "<string>" + escaped.String() + "</string>"
-}
-
-func xmlrpcInt(n int) string { return fmt.Sprintf("<i8>%d</i8>", n) }
-
 func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 	const token = "123:SUPERSECRET"
 	file := []byte("d4:infod4:name4:testee")
@@ -684,11 +503,12 @@ func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 	hash := strings.ToUpper(hex.EncodeToString(info[:]))
 	rtorrentFake.onLoad(func(string) *rtapi.Torrent { return &rtapi.Torrent{Name: "test", Hash: hash} })
 	app := &application{
-		bot:        newTestBot(t, telegramFake, token),
-		httpClient: telegramFake,
-		rtorrent:   client,
-		logger:     log.New(io.Discard, "", 0),
-		token:      token,
+		bot:          newTestBot(t, telegramFake, token),
+		httpClient:   telegramFake,
+		rtorrent:     client,
+		logger:       log.New(io.Discard, "", 0),
+		token:        token,
+		downloadRoot: "/remote",
 	}
 	message := &models.Message{
 		Chat:     models.Chat{ID: 111, Type: models.ChatTypePrivate},
@@ -698,7 +518,7 @@ func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 	expectSent(t, telegramFake.sent, 111, "Added: <"+strings.ToLower(hash[:7])+"> test")
 	app.wg.Wait()
 
-	loads := rtorrentFake.requestsContaining("load.raw_start")
+	loads := rtorrentFake.requestsContaining("load.raw")
 	if len(loads) != 1 {
 		t.Fatalf("got %d load.raw_start requests, want 1", len(loads))
 	}
@@ -709,6 +529,69 @@ func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 	}
 	if leaked := rtorrentFake.requestsContaining(token); len(leaked) != 0 {
 		t.Fatalf("token crossed the rTorrent boundary: %s", leaked[0])
+	}
+}
+
+func TestConfineDirectory(t *testing.T) {
+	tests := []struct{ root, requested, want string }{
+		{"/data", "movies", "/data/movies"},
+		{"/data", "/data/tv/", "/data/tv"},
+		{"/data", "/data", "/data"},
+		{"/data/", "a/../b", "/data/b"},
+		{"/", "/anywhere", "/anywhere"},
+		{"/data", "/data/../etc", ""},
+		{"/data", "../etc", ""},
+		{"/data", "/datax", ""},
+		{"/data", "/home/user/.ssh", ""},
+		{"relative", "movies", ""},
+		{"", "movies", ""},
+	}
+	for _, test := range tests {
+		got, err := confineDirectory(test.root, test.requested)
+		if got != test.want || (err == nil) != (test.want != "") {
+			t.Errorf("confineDirectory(%q, %q) = %q, %v; want %q", test.root, test.requested, got, err, test.want)
+		}
+	}
+}
+
+func TestUploadDirectoriesStayInsideTheDownloadRoot(t *testing.T) {
+	file := []byte("d4:infod4:name4:testee")
+	tests := []struct {
+		caption, root string
+		directory     string // the d.directory.set argument, if loaded
+		reply         string
+	}{
+		{"d=movies", "", `d.directory.set="/downloads/movies"`, ""},
+		{"d=/downloads/tv", "", `d.directory.set="/downloads/tv"`, ""},
+		{"d=/home/user/.ssh", "", "", "receiver: /home/user/.ssh is outside the download root /downloads; set -download-root to allow it"},
+		{"d=/mnt/disk2/movies", "/mnt", `d.directory.set="/mnt/disk2/movies"`, ""},
+	}
+	for _, test := range tests {
+		t.Run(test.caption, func(t *testing.T) {
+			telegramFake := &fakeTelegram{file: file, sent: make(chan sentMessage, 4)}
+			rtorrentFake, client := newFakeRtorrent(t)
+			app := &application{
+				bot: newTestBot(t, telegramFake, "123:SECRET"), httpClient: telegramFake, rtorrent: client,
+				logger: log.New(io.Discard, "", 0), token: "123:SECRET", downloadRoot: test.root,
+			}
+			message := &models.Message{
+				Chat:     models.Chat{ID: 111, Type: models.ChatTypePrivate},
+				Document: &models.Document{FileID: "file", FileName: "a.torrent", FileSize: int64(len(file))},
+			}
+			app.receiveTorrent(context.Background(), 111, message, test.caption)
+			app.wg.Wait()
+			loads := rtorrentFake.loadCalls()
+			if test.reply != "" {
+				expectSent(t, telegramFake.sent, 111, test.reply)
+				if len(loads) != 0 {
+					t.Fatalf("a refused directory reached rTorrent: %v", loads)
+				}
+				return
+			}
+			if len(loads) != 1 || !slices.Contains(loads[0], test.directory) {
+				t.Fatalf("load calls = %q, want one with %s", loads, test.directory)
+			}
+		})
 	}
 }
 
@@ -725,7 +608,7 @@ func TestUploadRejectsInvalidTorrentFiles(t *testing.T) {
 	}
 	app.receiveTorrent(context.Background(), 111, message, "")
 	expectSent(t, telegramFake.sent, 111, "receiver: bad.torrent is not a valid torrent file: not a bencoded dictionary")
-	if loads := rtorrentFake.requestsContaining("load.raw_start"); len(loads) != 0 {
+	if len(rtorrentFake.loadCalls()) != 0 {
 		t.Fatal("an invalid file was sent to rTorrent")
 	}
 }
@@ -816,7 +699,7 @@ func TestAddConfirmsWhatRtorrentLoaded(t *testing.T) {
 				t.Fatal("add sent no reply")
 			}
 			app.wg.Wait()
-			if requested := len(rtorrentFake.requestsContaining("<methodName>load.start</methodName>")) != 0; requested != test.request {
+			if requested := len(rtorrentFake.loadCalls()) != 0; requested != test.request {
 				t.Fatalf("load requested = %v, want %v", requested, test.request)
 			}
 		})
@@ -905,7 +788,7 @@ func TestDeldataRefusesUnknownOrSharedData(t *testing.T) {
 			default:
 				t.Fatal("deldata sent no reply")
 			}
-			erased := len(rtorrentFake.requestsContaining(">d.erase<")) != 0
+			erased := len(rtorrentFake.called("d.erase")) != 0
 			_, err := os.Stat(show)
 			if erased != test.deleted || os.IsNotExist(err) != test.deleted {
 				t.Fatalf("erased=%v data removed=%v, want both %v", erased, os.IsNotExist(err), test.deleted)

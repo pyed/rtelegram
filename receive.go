@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
@@ -46,6 +47,10 @@ func (a *application) receiveTorrent(ctx context.Context, chatID int64, message 
 		return
 	}
 	directory, label := processOptions(caption)
+	if directory, err = a.downloadDirectory(directory); err != nil {
+		a.send(ctx, chatID, "receiver: "+err.Error())
+		return
+	}
 	options := &rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: label}
 	if err := a.rtorrent.DownloadRaw(data, options); err != nil {
 		a.logger.Printf("add uploaded torrent: %s", redact(a.token, err.Error()))
@@ -163,6 +168,43 @@ func (a *application) downloadTelegramFile(ctx context.Context, fileID string) (
 		return nil, errors.New("telegram returned an empty torrent file")
 	}
 	return data, nil
+}
+
+// downloadDirectory confines a caption's download directory to the download
+// root, so a caption cannot make rTorrent write anywhere else on its host. The
+// root is -download-root, or rTorrent's default directory when that is unset.
+func (a *application) downloadDirectory(requested string) (string, error) {
+	if requested == "" {
+		return "", nil
+	}
+	root := a.downloadRoot
+	if root == "" {
+		stats, err := a.rtorrent.Stats()
+		if err != nil {
+			return "", err
+		}
+		root = stats.Directory
+	}
+	return confineDirectory(root, requested)
+}
+
+// confineDirectory places a relative directory under root and accepts an
+// absolute one only inside root. Paths are slash-separated because rTorrent
+// interprets them on its own host.
+func confineDirectory(root, requested string) (string, error) {
+	if !path.IsAbs(root) {
+		return "", fmt.Errorf("download directories are disabled: the download root %q is not absolute; set -download-root", root)
+	}
+	root = path.Clean(root)
+	directory := requested
+	if !path.IsAbs(directory) {
+		directory = path.Join(root, directory)
+	}
+	directory = path.Clean(directory)
+	if root != "/" && directory != root && !strings.HasPrefix(directory, root+"/") {
+		return "", fmt.Errorf("%s is outside the download root %s; set -download-root to allow it", requested, root)
+	}
+	return directory, nil
 }
 
 func processOptions(options string) (directory, label string) {

@@ -69,6 +69,9 @@ Key flags:
 - `-completed-torrents-logfile` watches an rTorrent completion log and requires
   an explicit `-notify-chat-id` destination.
 - `-data-root` enables `deldata` only beneath that absolute, same-host directory.
+- `-download-root` is the rTorrent directory that upload captions may choose
+  download directories under. Without it, they must be inside rTorrent's default
+  directory.
 
 ## Commands
 
@@ -96,7 +99,9 @@ brackets, such as `<1c60cbe>`.
 | `help`, `version` | | |
 
 To add a `.torrent` file, send it to the bot. In a private chat the caption can
-set the download directory and label, as `d=/path` and `l=label`. In a group,
+set the download directory and label, as `d=/path` and `l=label`. The directory
+must be inside the download root (see `-download-root`), and a relative one is
+placed under it. In a group,
 the file needs `/add` as its caption. Files are limited to 16 MiB. The bot
 downloads the file inside the Telegram trust boundary and passes raw bytes to
 rTorrent, so the bot token is never embedded in an SCGI request.
