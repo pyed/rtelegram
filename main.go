@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path"
@@ -42,12 +43,13 @@ Torrent references are the stable hash prefixes shown by list commands.
 In groups, commands must start with /.`
 
 const (
-	defaultSCGIURL      = "localhost:5000"
-	defaultLiveInterval = 3 * time.Second
-	defaultLiveUpdates  = 5
-	defaultAddTimeout   = 15 * time.Second
-	maxTelegramMessage  = 4096
-	maxTorrentFileSize  = 16 << 20
+	defaultRtorrentAddress = "localhost:5000"
+	defaultMaxResponseMiB  = 16
+	defaultLiveInterval    = 3 * time.Second
+	defaultLiveUpdates     = 5
+	defaultAddTimeout      = 15 * time.Second
+	maxTelegramMessage     = 4096
+	maxTorrentFileSize     = 16 << 20
 	// Replies longer than this many messages are attached as a text file.
 	maxMessageChunks    = 3
 	maxTelegramAttempts = 4
@@ -65,7 +67,9 @@ type principals struct {
 type config struct {
 	token           string
 	masters         principals
-	scgiURL         string
+	rtorrentAddress string
+	maxResponseMiB  int64
+	addStopped      bool
 	logFile         string
 	completedLog    string
 	notifyChatID    int64
@@ -98,6 +102,7 @@ type application struct {
 	notifyChatID int64
 	dataRoot     string
 	downloadRoot string
+	addStopped   bool
 	noLive       bool
 	interval     time.Duration
 	duration     int
@@ -172,10 +177,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if err != nil {
 		return fmt.Errorf("telegram authorization: %s", redact(cfg.token, err.Error()))
 	}
-	rtorrent, err := rtapi.NewRtorrentContext(ctx, cfg.scgiURL)
+	rtorrent, err := rtapi.NewRtorrentContext(ctx, cfg.rtorrentAddress)
 	if err != nil {
 		return fmt.Errorf("rTorrent: %w", err)
 	}
+	rtorrent.MaxResponseSize = cfg.maxResponseMiB << 20
 
 	app = &application{
 		bot:             b,
@@ -188,6 +194,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		notifyChatID:    cfg.notifyChatID,
 		dataRoot:        cfg.dataRoot,
 		downloadRoot:    cfg.downloadRoot,
+		addStopped:      cfg.addStopped,
 		noLive:          cfg.noLive,
 		interval:        defaultLiveInterval,
 		duration:        defaultLiveUpdates,
@@ -195,7 +202,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		addPollInterval: time.Second,
 		sorts:           make(map[int64]sortPreference),
 	}
-	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, cfg.scgiURL)
+	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
 	if cfg.completedLog != "" {
 		app.launch(ctx, func(watchCtx context.Context) { app.watchCompletedLog(watchCtx, cfg.completedLog) })
 	}
@@ -211,7 +218,9 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.token, "token", "", "Telegram bot token (or RT_TOKEN)")
 	fs.StringVar(&mastersText, "masters", "", "Comma-separated Telegram user IDs or legacy usernames (or RT_MASTERS)")
-	fs.StringVar(&cfg.scgiURL, "url", defaultSCGIURL, "rTorrent SCGI URL")
+	fs.StringVar(&cfg.rtorrentAddress, "url", "", "rTorrent address: an SCGI socket path or host:port, or an http(s):// XML-RPC URL (or RT_URL; default "+defaultRtorrentAddress+")")
+	fs.Int64Var(&cfg.maxResponseMiB, "max-response-mib", defaultMaxResponseMiB, "Largest rTorrent response to accept, in MiB; raise it for very large libraries")
+	fs.BoolVar(&cfg.addStopped, "add-stopped", false, "Add torrents without starting them")
 	fs.StringVar(&cfg.logFile, "logfile", "", "Send logs to a file")
 	fs.StringVar(&cfg.completedLog, "completed-torrents-logfile", "", "Watch an rTorrent completion log")
 	fs.Int64Var(&cfg.notifyChatID, "notify-chat-id", 0, "Chat ID for completion notifications")
@@ -243,6 +252,15 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	}
 	cfg.masters = masters
 	cfg.legacyUsernames = legacy
+	if cfg.rtorrentAddress == "" {
+		cfg.rtorrentAddress = getenv("RT_URL")
+	}
+	if strings.TrimSpace(cfg.rtorrentAddress) == "" {
+		cfg.rtorrentAddress = defaultRtorrentAddress
+	}
+	if cfg.maxResponseMiB < 1 || cfg.maxResponseMiB > 1<<16 {
+		return config{}, errors.New("-max-response-mib must be between 1 and 65536")
+	}
 	if cfg.completedLog != "" && cfg.notifyChatID == 0 {
 		return config{}, errors.New("-notify-chat-id is required with -completed-torrents-logfile")
 	}
@@ -461,6 +479,14 @@ func (a *application) whoami(ctx context.Context, chatID int64, user *models.Use
 	}
 	a.send(ctx, chatID, fmt.Sprintf("User ID: %d%s\nChat ID: %d\n\nUse the user ID in RT_MASTERS, and the chat ID with -notify-chat-id.",
 		user.ID, username, chatID))
+}
+
+// redactAddress hides the password in an http(s) rTorrent address.
+func redactAddress(address string) string {
+	if parsed, err := url.Parse(address); err == nil && parsed.User != nil {
+		return parsed.Redacted()
+	}
+	return address
 }
 
 func redact(secret, text string) string {

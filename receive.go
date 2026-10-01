@@ -51,7 +51,7 @@ func (a *application) receiveTorrent(ctx context.Context, chatID int64, message 
 		a.send(ctx, chatID, "receiver: "+err.Error())
 		return
 	}
-	options := &rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: label}
+	options := &rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: label, Stopped: a.addStopped}
 	if err := a.rtorrent.DownloadRawContext(ctx, data, options); err != nil {
 		a.logger.Printf("add uploaded torrent: %s", redact(a.token, err.Error()))
 		a.send(ctx, chatID, "receiver: "+redact(a.token, err.Error()))

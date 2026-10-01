@@ -54,6 +54,69 @@ func TestParsePrincipalsAndAuthorization(t *testing.T) {
 	}
 }
 
+func TestParseConfigAddressAndLimits(t *testing.T) {
+	parse := func(rtURL string, args ...string) (config, error) {
+		env := map[string]string{"RT_TOKEN": "123:SECRET", "RT_MASTERS": "7", "RT_URL": rtURL}
+		return parseConfig(args, func(name string) string { return env[name] }, io.Discard)
+	}
+	tests := []struct {
+		rtURL   string
+		args    []string
+		address string
+		limit   int64
+		stopped bool
+	}{
+		{"", nil, "localhost:5000", 16, false},
+		{"https://user:pass@seedbox.example/RPC2", nil, "https://user:pass@seedbox.example/RPC2", 16, false},
+		{"https://seedbox.example/RPC2", []string{"-url", "/run/rtorrent.sock"}, "/run/rtorrent.sock", 16, false},
+		{"", []string{"-max-response-mib", "64", "-add-stopped"}, "localhost:5000", 64, true},
+	}
+	for _, test := range tests {
+		cfg, err := parse(test.rtURL, test.args...)
+		if err != nil || cfg.rtorrentAddress != test.address || cfg.maxResponseMiB != test.limit || cfg.addStopped != test.stopped {
+			t.Errorf("parseConfig(%v, RT_URL=%q) = %q, %d, %v, %v", test.args, test.rtURL, cfg.rtorrentAddress, cfg.maxResponseMiB, cfg.addStopped, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"-max-response-mib", "0"}, {"-max-response-mib", "65537"}, {"-download-root", "relative"},
+	} {
+		if _, err := parse("", args...); err == nil {
+			t.Errorf("parseConfig(%v) unexpectedly succeeded", args)
+		}
+	}
+}
+
+func TestRedactAddressHidesPasswords(t *testing.T) {
+	if got := redactAddress("https://alice:s3cret@seedbox.example/RPC2"); strings.Contains(got, "s3cret") || !strings.Contains(got, "seedbox.example/RPC2") {
+		t.Fatalf("redactAddress = %q", got)
+	}
+	for _, address := range []string{"localhost:5000", "/run/rtorrent.sock", "https://seedbox.example/RPC2"} {
+		if got := redactAddress(address); got != address {
+			t.Errorf("redactAddress(%q) = %q", address, got)
+		}
+	}
+}
+
+func TestAddStoppedLoadsWithoutStarting(t *testing.T) {
+	file := []byte("d4:infod4:name4:testee")
+	rtorrentFake, client := newFakeRtorrent(t)
+	telegramFake := &fakeTelegram{file: file, sent: make(chan sentMessage, 4)}
+	app := &application{
+		bot: newTestBot(t, telegramFake, "123:SECRET"), httpClient: telegramFake, rtorrent: client,
+		logger: log.New(io.Discard, "", 0), token: "123:SECRET", addStopped: true,
+	}
+	app.add(context.Background(), 111, []string{"https://tracker.example/linux.torrent"})
+	app.wg.Wait()
+	app.receiveTorrent(context.Background(), 111, &models.Message{
+		Chat:     models.Chat{ID: 111, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "file", FileName: "a.torrent", FileSize: int64(len(file))},
+	}, "")
+	app.wg.Wait()
+	if stopped, started := len(rtorrentFake.called("load.verbose", "load.raw")), len(rtorrentFake.called("load.start_verbose", "load.raw_start")); stopped != 2 || started != 0 {
+		t.Fatalf("stopped loads = %d, started loads = %d", stopped, started)
+	}
+}
+
 func TestParseCommandRequiresSlashInGroupsAndSupportsSuffixes(t *testing.T) {
 	tests := []struct {
 		name    string

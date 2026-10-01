@@ -50,7 +50,7 @@ func (a *application) addSource(ctx context.Context, chatID int64, source string
 		a.send(ctx, chatID, "add: "+name+" is already loaded")
 		return
 	}
-	if err := a.rtorrent.DownloadContext(ctx, source); err != nil {
+	if err := a.rtorrent.DownloadWithOptionsContext(ctx, &rtapi.DotTorrentWithOptions{Link: source, Stopped: a.addStopped}); err != nil {
 		a.logger.Printf("add: %s", err)
 		a.send(ctx, chatID, "add: "+err.Error())
 		return

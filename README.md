@@ -28,6 +28,10 @@ go install github.com/pyed/rtelegram/v2@latest
    network.scgi.open_port = 127.0.0.1:5000
    ```
 
+   If rTorrent is only reachable through a web server's XML-RPC endpoint, as
+   on many seedboxes and with ruTorrent or Transdroid, use that URL instead:
+   `RT_URL=https://user:password@seedbox.example/RPC2`.
+
 2. **Create a bot.** Message [@BotFather](https://t.me/BotFather), send
    `/newbot`, and follow the prompts. It replies with the bot's token.
 
@@ -60,8 +64,16 @@ rejected.
 
 Key flags:
 
-- `-token` and `-masters` override `RT_TOKEN` and `RT_MASTERS`.
-- `-url` selects the Unix-socket path or TCP SCGI address.
+- `-token`, `-masters`, and `-url` override `RT_TOKEN`, `RT_MASTERS`, and
+  `RT_URL`. Prefer the environment variables for secrets, since command-line
+  flags are visible to other users of the machine.
+- `-url` is rTorrent's address: an SCGI socket path, an SCGI `host:port`
+  (default `localhost:5000`), or an `http://` or `https://` XML-RPC URL.
+  Credentials in a URL are sent with HTTP basic authentication and hidden in
+  logs.
+- `-add-stopped` adds torrents without starting them.
+- `-max-response-mib` is the largest rTorrent response the bot accepts
+  (default 16). Raise it if listing a very large library fails.
 - `-logfile` writes operational logs to a private file.
 - `-no-live` disables follow-up message edits.
 - `-version` prints the build version without requiring configuration or network
