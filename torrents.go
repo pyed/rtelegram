@@ -135,18 +135,21 @@ func formatTorrentInfo(torrent *rtapi.Torrent) string {
 	return fmt.Sprintf("%s\n%s %s (%s) ↓ %s ↑ %s R: %.2f UP: %s\nAdded: %s, ETA: %s\nTracker: %s",
 		torrent.Name, torrent.State, formatBytes(torrent.Completed), torrent.Percent,
 		formatBytes(torrent.DownRate), formatBytes(torrent.UpRate), torrent.Ratio,
-		formatBytes(torrent.UpTotal), timeFromUnix(torrent.Age), formatETA(torrent.ETA), trackerHost(torrent.Tracker))
+		formatBytes(torrent.UpTotal), timeFromUnix(torrent.Age), formatETA(torrent), trackerHost(torrent.Tracker))
 }
 
 func timeFromUnix(seconds uint64) string {
-	return time.Unix(int64(seconds), 0).Format(time.Stamp)
+	return time.Unix(int64(seconds), 0).Format("2006-01-02 15:04")
 }
 
-func formatETA(seconds uint64) string {
-	if seconds == 0 {
-		return "unknown"
+func formatETA(torrent *rtapi.Torrent) string {
+	switch {
+	case torrent.Size > 0 && torrent.Completed >= torrent.Size:
+		return "done"
+	case torrent.ETA == 0:
+		return "unknown" // stalled, or the size is not known yet
 	}
-	return (time.Duration(seconds) * time.Second).String()
+	return (time.Duration(torrent.ETA) * time.Second).String()
 }
 
 func deletionRelative(root, target string) (string, error) {
@@ -260,12 +263,9 @@ func parseCount(tokens []string, fallback, total int) (int, error) {
 	if len(tokens) > 0 {
 		var err error
 		n, err = strconv.Atoi(tokens[0])
-		if err != nil {
-			return 0, errors.New("argument must be a number")
+		if err != nil || n <= 0 {
+			return 0, errors.New("argument must be a positive number")
 		}
 	}
-	if n <= 0 || n > total {
-		n = total
-	}
-	return n, nil
+	return min(n, total), nil
 }

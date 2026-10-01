@@ -207,17 +207,29 @@ func confineDirectory(root, requested string) (string, error) {
 	return directory, nil
 }
 
-func processOptions(options string) (directory, label string) {
-	for _, option := range strings.Fields(options) {
+// processOptions reads an upload caption's d=DIRECTORY and l=LABEL options.
+// As in earlier versions, one other word is the directory if it contains a
+// slash and the label otherwise. Two or more other words are a note, and are
+// ignored rather than becoming a label.
+func processOptions(caption string) (directory, label string) {
+	var words []string
+	for _, field := range strings.Fields(caption) {
+		if value, ok := strings.CutPrefix(field, "d="); ok {
+			directory = value
+		} else if value, ok := strings.CutPrefix(field, "l="); ok {
+			label = value
+		} else {
+			words = append(words, field)
+		}
+	}
+	if len(words) == 1 {
 		switch {
-		case strings.HasPrefix(option, "d="):
-			directory = strings.TrimPrefix(option, "d=")
-		case strings.HasPrefix(option, "l="):
-			label = strings.TrimPrefix(option, "l=")
-		case strings.ContainsAny(option, "/\\"):
-			directory = option
-		default:
-			label = option
+		case strings.ContainsAny(words[0], `/\`):
+			if directory == "" {
+				directory = words[0]
+			}
+		case label == "":
+			label = words[0]
 		}
 	}
 	return directory, label

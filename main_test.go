@@ -618,6 +618,41 @@ func TestShutdownInterruptsWaitingForRtorrent(t *testing.T) {
 	}
 }
 
+func TestProcessOptionsIgnoresNotes(t *testing.T) {
+	tests := []struct{ caption, directory, label string }{
+		{"d=/data/tv l=shows", "/data/tv", "shows"},
+		{"Software", "", "Software"},
+		{"/data/movies", "/data/movies", ""},
+		{"d=/data/tv linux", "/data/tv", "linux"},
+		{"l=tv /data/tv", "/data/tv", "tv"},
+		{"Ubuntu ISO for later", "", ""},
+		{"see https://example.org/info for details", "", ""},
+		{"d=/data/tv two words", "/data/tv", ""},
+		{"", "", ""},
+	}
+	for _, test := range tests {
+		if directory, label := processOptions(test.caption); directory != test.directory || label != test.label {
+			t.Errorf("processOptions(%q) = %q, %q; want %q, %q", test.caption, directory, label, test.directory, test.label)
+		}
+	}
+}
+
+func TestTorrentInfoShowsDoneAndTheYear(t *testing.T) {
+	added := uint64(time.Date(2023, 11, 14, 12, 0, 0, 0, time.Local).Unix())
+	finished := formatTorrentInfo(&rtapi.Torrent{Name: "done", State: rtapi.Seeding, Size: 10, Completed: 10, Age: added})
+	if !strings.Contains(finished, "Added: 2023-11-14 12:00, ETA: done") {
+		t.Fatalf("finished torrent info = %q", finished)
+	}
+	stalled := formatTorrentInfo(&rtapi.Torrent{Name: "stalled", State: rtapi.Leeching, Size: 10, Completed: 5, Age: added})
+	if !strings.Contains(stalled, "ETA: unknown") {
+		t.Fatalf("stalled torrent info = %q", stalled)
+	}
+	moving := formatTorrentInfo(&rtapi.Torrent{Name: "moving", State: rtapi.Leeching, Size: 10, Completed: 5, ETA: 90, Age: added})
+	if !strings.Contains(moving, "ETA: 1m30s") {
+		t.Fatalf("downloading torrent info = %q", moving)
+	}
+}
+
 func TestConfineDirectory(t *testing.T) {
 	tests := []struct{ root, requested, want string }{
 		{"/data", "movies", "/data/movies"},

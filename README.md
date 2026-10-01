@@ -111,10 +111,11 @@ brackets, such as `<1c60cbe>`.
 | `help`, `version` | | |
 
 To add a `.torrent` file, send it to the bot. In a private chat the caption can
-set the download directory and label, as `d=/path` and `l=label`. The directory
-must be inside the download root (see `-download-root`), and a relative one is
-placed under it. In a group,
-the file needs `/add` as its caption. Files are limited to 16 MiB. The bot
+set the download directory and label, as `d=/path` and `l=label`. A single other
+word sets the label, or the directory if it contains a slash; longer notes are
+ignored. The directory must be inside the download root (see `-download-root`),
+and a relative one is placed under it. In a group, the file needs `/add` as its
+caption. Files are limited to 16 MiB. The bot
 downloads the file inside the Telegram trust boundary and passes raw bytes to
 rTorrent, so the bot token is never embedded in an SCGI request.
 
