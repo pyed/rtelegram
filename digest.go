@@ -204,8 +204,8 @@ func (a *application) buildDigest(ctx context.Context, now time.Time, settings d
 	if down, up, err := a.rtorrent.SpeedsContext(ctx); err == nil {
 		fmt.Fprintf(&text, "\nNow: ↓ %s/s ↑ %s/s", formatBytes(down), formatBytes(up))
 	}
-	if len(torrents) > 0 {
-		newest := slices.MaxFunc(torrents, func(x, y *rtapi.Torrent) int { return cmp.Compare(x.Age, y.Age) })
+	if active := spaceTorrents(torrents); len(active) > 0 {
+		newest := slices.MaxFunc(active, func(x, y *rtapi.Torrent) int { return cmp.Compare(x.Age, y.Age) })
 		if free, err := a.rtorrent.FreeDiskSpaceContext(ctx, newest.Hash); err == nil {
 			fmt.Fprintf(&text, "\nFree space: %s", formatBytes(free))
 		}

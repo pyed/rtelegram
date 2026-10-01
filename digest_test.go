@@ -143,3 +143,16 @@ func TestDigestCommandsTopicsAndBlockedChats(t *testing.T) {
 		}
 	})
 }
+
+// rTorrent reports no free space for torrents it has not opened, so a
+// digest with none active leaves free space out rather than say 0 B.
+func TestDigestOmitsFreeSpaceWithoutActiveTorrents(t *testing.T) {
+	app, telegramFake, rtorrentFake := buttonApp(t, rtapi.Torrents{
+		{Name: "stopped", Hash: strings.Repeat("A", 40), State: rtapi.Stopped},
+		{Name: "complete", Hash: strings.Repeat("B", 40), State: rtapi.Complete, Age: 7},
+	})
+	rtorrentFake.set(func(f *fakeRtorrent) { f.freeSpace = 10 << 30 })
+	if got := lastSentText(t, telegramFake, app, "digest now"); strings.Contains(got, "Free space") {
+		t.Fatalf("digest without active torrents:\n%s", got)
+	}
+}

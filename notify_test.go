@@ -185,6 +185,36 @@ func TestLowDiskSpaceIsAnnouncedWithHysteresis(t *testing.T) {
 		t.Fatalf("after recovery = %q", sent)
 	}
 
+	// Without downloads, seeding torrents tell where data goes.
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.freeSpace = 1 << 30
+		f.torrents = rtapi.Torrents{
+			{Name: "stopped", Hash: strings.Repeat("A", 40), State: rtapi.Stopped, Age: 9},
+			{Name: "seeding", Hash: strings.Repeat("B", 40), State: rtapi.Seeding, Age: 1},
+		}
+	})
+	seeding := &watcher{}
+	app.checkEvents(ctx, seeding, time.Now())
+	app.checkEvents(ctx, seeding, time.Now()) // still low: not repeated
+	if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], "1.0 GiB free") {
+		t.Fatalf("with only seeding torrents = %q", sent)
+	}
+
+	// Torrents rTorrent has not opened report no free space, which is not
+	// a full disk.
+	recovered := &watcher{}
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.freeSpace = 100 << 30
+		f.torrents = rtapi.Torrents{
+			{Name: "stopped", Hash: strings.Repeat("A", 40), State: rtapi.Stopped, Age: 9},
+			{Name: "complete", Hash: strings.Repeat("C", 40), State: rtapi.Complete, Age: 5},
+		}
+	})
+	app.checkEvents(ctx, recovered, time.Now())
+	if sent := drain(telegramFake); len(sent) != 0 {
+		t.Fatalf("with no active torrents = %q", sent)
+	}
+
 	app.lowDisk = 0
 	before := len(rtorrentFake.called("d.free_diskspace"))
 	app.checkEvents(ctx, w, time.Now())

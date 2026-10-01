@@ -26,7 +26,7 @@ type fakeRtorrent struct {
 	upRate    uint64
 	limits    [2]uint64               // global down and up rate limits
 	totals    [2]uint64               // session uploaded and downloaded bytes
-	freeSpace uint64                  // d.free_diskspace for every torrent
+	freeSpace uint64                  // d.free_diskspace for every active torrent
 	files     map[string][]rtapi.File // by torrent hash
 	load      func(body string) *rtapi.Torrent
 	stall     chan struct{} // when set, requests wait until it is closed
@@ -302,6 +302,11 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		f.torrents = append(f.torrents[:index:index], f.torrents[index+1:]...)
 		return xmlrpcInt(0), false
 	case "d.free_diskspace":
+		// rTorrent knows where a torrent's data is only once it opens the
+		// torrent; active torrents are open, and the rest here are not.
+		if torrent.State != rtapi.Leeching && torrent.State != rtapi.Seeding && torrent.State != rtapi.Error {
+			return xmlrpcInt(0), false
+		}
 		return xmlrpcInt(int64(f.freeSpace)), false
 	case "d.update_priorities":
 		return xmlrpcInt(0), false

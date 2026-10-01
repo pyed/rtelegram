@@ -157,12 +157,9 @@ func (w *watcher) torrentEvents(torrents rtapi.Torrents, now time.Time, stallAft
 // diskEvents warns once when free space where downloads land drops below
 // lowDisk, and again only after it recovers by a tenth.
 func (a *application) diskEvents(ctx context.Context, w *watcher, torrents rtapi.Torrents) []event {
-	if a.lowDisk == 0 || len(torrents) == 0 {
+	check := spaceTorrents(torrents)
+	if a.lowDisk == 0 || len(check) == 0 {
 		return nil
-	}
-	check := filterTorrents(torrents, func(torrent *rtapi.Torrent) bool { return torrent.State == rtapi.Leeching })
-	if len(check) == 0 {
-		check = rtapi.Torrents{slices.MaxFunc(torrents, func(x, y *rtapi.Torrent) int { return cmp.Compare(x.Age, y.Age) })}
 	}
 	free := uint64(math.MaxUint64)
 	for _, torrent := range check[:min(len(check), maxDiskChecks)] {
@@ -179,6 +176,19 @@ func (a *application) diskEvents(ctx context.Context, w *watcher, torrents rtapi
 		w.lowDisk = false
 	}
 	return nil
+}
+
+// spaceTorrents returns the torrents through which rTorrent can report free
+// disk space. It learns where a torrent's data is only when it opens the
+// torrent, and reports 0 until then; active torrents are always open.
+// Downloads come first, as they are what fills the disk.
+func spaceTorrents(torrents rtapi.Torrents) rtapi.Torrents {
+	if downloading := filterTorrents(torrents, func(torrent *rtapi.Torrent) bool { return torrent.State == rtapi.Leeching }); len(downloading) > 0 {
+		return downloading
+	}
+	return filterTorrents(torrents, func(torrent *rtapi.Torrent) bool {
+		return torrent.State == rtapi.Seeding || torrent.State == rtapi.Error
+	})
 }
 
 // deliver sends each event to the chats subscribed to it. A chat that has
