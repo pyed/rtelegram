@@ -85,7 +85,8 @@ Key flags:
 - `-state` is the file where the bot keeps settings such as sort orders and
   notification subscriptions. It defaults to `rtelegram/state.json` in the
   user's config directory.
-- `-data-root` enables `deldata` only beneath that absolute, same-host directory.
+- `-data-root` enables `deldata` and `get` only beneath that absolute directory,
+  on the machine rtelegram runs on.
 - `-download-root` is the rTorrent directory that upload captions may choose
   download directories under. Without it, they must be inside rTorrent's default
   directory.
@@ -94,7 +95,7 @@ Key flags:
 
 Lists come with a button for each torrent, ten to a page with ◀ ▶ to move
 between pages. Tapping a torrent opens its card, with buttons to start or stop
-it, verify it, remove it, refresh, and go back to the list. Removing asks for
+it, verify it, remove it, list its files, refresh, and go back to the list. Removing asks for
 confirmation first. Only the users in `RT_MASTERS` can use the buttons, even in
 groups, and the bot remembers the buttons of its last 500 messages.
 
@@ -114,6 +115,8 @@ brackets, such as `<1c60cbe>`.
 | `latest [n]` | `la` | List the n most recently added torrents |
 | `add URL...` | `ad` | Add torrents from URLs or magnet links, and confirm rTorrent loaded them |
 | `info HASH...` | `in` | Show each torrent's card |
+| `files HASH` | `fi` | List a torrent's files, and skip or prioritize them |
+| `get HASH [N]` | | Send a torrent's finished file, up to 50 MB (needs `-data-root`) |
 | `start`, `stop`, `check` `HASH...\|all` | `st`, `sp`, `ck` | Start, stop, or verify torrents |
 | `del HASH...` | | Remove torrents from rTorrent and keep their data |
 | `deldata HASH [confirm]` | | Remove a torrent and its data, after asking (see below) |
@@ -144,6 +147,20 @@ have changed and tells the operator to refresh before retrying.
 
 Replies longer than three messages arrive as a text file. When Telegram limits
 how fast the bot may send, the bot waits as long as Telegram asks and retries.
+
+## Files
+
+`/files HASH`, or 📂 Files on a torrent's card, lists the torrent's files with
+their size, progress, and priority. Tap a file to cycle it between skip,
+normal, and high; ⬜ Skip all and ✅ Download all change every file at once.
+Skipping files before they download is how to take only some episodes from a
+season pack.
+
+When rtelegram runs on the same machine as rTorrent and `-data-root` is set,
+finished files up to 50 MB (Telegram's limit for bots) get a 📥 button that
+sends the file to the chat, and `/get HASH N` sends file N. A single-file
+torrent needs no N. Files are read only from inside `-data-root`, and symbolic
+links cannot lead outside it.
 
 ## Notifications
 

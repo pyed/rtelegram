@@ -156,6 +156,12 @@ func deletionRelative(root, target string) (string, error) {
 	if root == "" {
 		return "", errors.New("deldata is disabled; configure an absolute -data-root")
 	}
+	return containedRelative(root, target)
+}
+
+// containedRelative returns target relative to root, when target is strictly
+// inside root.
+func containedRelative(root, target string) (string, error) {
 	if !filepath.IsAbs(root) || !filepath.IsAbs(target) {
 		return "", errors.New("data root and torrent path must be absolute")
 	}

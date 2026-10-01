@@ -34,7 +34,7 @@ tail (ta) [count] - list the last torrents
 down (dl), seeding (sd), paused (pa), checking (ch), active (ac), errors (er)
 sort (so) [rev] name|downrate|uprate|size|ratio|age|upload
 trackers (tr), search (se) QUERY, latest (la) [count]
-add (ad) URL..., info (in) HASH...
+add (ad) URL..., info (in) HASH..., files (fi) HASH, get HASH [N]
 stop (sp), start (st), check (ck) HASH...|all
 del HASH..., deldata HASH [confirm]
 stats (sa), speed (ss), count (co), notify [on|off], whoami, help, version
@@ -466,6 +466,10 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.del(ctx, chatID, args)
 	case "deldata":
 		a.deldata(ctx, chatID, args)
+	case "files", "fi":
+		a.files(ctx, chatID, args)
+	case "get":
+		a.get(ctx, chatID, args)
 	case "notify":
 		a.notify(ctx, chatID, args)
 	case "whoami":

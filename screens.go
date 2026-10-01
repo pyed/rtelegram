@@ -39,6 +39,7 @@ type screen struct {
 	confirm string    // "del" or "deldata" while a card asks for confirmation
 	parent  *screen   // the list page a card was opened from
 	notify  bool      // the /notify settings
+	files   string    // the torrent whose files are shown
 }
 
 // screenStore remembers the most recent screens, forgetting the oldest
@@ -208,7 +209,7 @@ func (a *application) renderCard(torrent *rtapi.Torrent, scr *screen) (string, *
 	if a.dataRoot != "" {
 		removals = append(removals, button("💣 Remove + data", "a:deldata"))
 	}
-	last := []models.InlineKeyboardButton{button("🔄 Refresh", "a:refresh")}
+	last := []models.InlineKeyboardButton{button("📂 Files", "files"), button("🔄 Refresh", "a:refresh")}
 	if scr.parent != nil && scr.parent.list != nil {
 		last = append(last, button("« Back", "back"))
 	}
@@ -309,10 +310,15 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 	case "noop":
 		return "", false
 	case "pg":
+		page, _ := strconv.Atoi(arg)
+		if scr.files != "" {
+			next := *scr
+			next.page = page
+			return a.redrawFiles(ctx, key, &next, "")
+		}
 		if scr.list == nil {
 			break
 		}
-		page, _ := strconv.Atoi(arg)
 		return a.redrawList(ctx, key, *scr.list, page, "")
 	case "all":
 		if scr.list == nil {
@@ -328,10 +334,29 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 		parent := *scr
 		return a.redrawCard(ctx, key, &screen{hash: arg, parent: &parent}, "")
 	case "back":
+		if scr.files != "" && scr.parent != nil {
+			return a.redrawCard(ctx, key, scr.parent, "")
+		}
 		if scr.parent == nil || scr.parent.list == nil {
 			break
 		}
 		return a.redrawList(ctx, key, *scr.parent.list, scr.parent.page, "")
+	case "files":
+		if scr.hash == "" {
+			break
+		}
+		card := *scr
+		return a.redrawFiles(ctx, key, &screen{files: scr.hash, parent: &card}, "")
+	case "fp":
+		if scr.files == "" {
+			break
+		}
+		return a.pressFilePriority(ctx, key, scr, arg)
+	case "fg":
+		if scr.files == "" {
+			break
+		}
+		return a.pressGet(ctx, key, scr, arg)
 	case "n":
 		next := *scr
 		next.confirm = ""
