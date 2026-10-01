@@ -234,9 +234,9 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		}
 		return xmlrpcInt(0), false
 	case "throttle.global_down.rate":
-		return xmlrpcInt(int(f.downRate)), false
+		return xmlrpcInt(int64(f.downRate)), false
 	case "throttle.global_up.rate":
-		return xmlrpcInt(int(f.upRate)), false
+		return xmlrpcInt(int64(f.upRate)), false
 	case "throttle.up.max", "throttle.down.max":
 		return xmlrpcInt(0), false
 	case "throttle.global_up.total":
@@ -295,19 +295,19 @@ func (f *fakeRtorrent) field(torrent *rtapi.Torrent, name string) string {
 	case "d.hash":
 		return xmlrpcString(torrent.Hash)
 	case "d.down.rate":
-		return xmlrpcInt(int(torrent.DownRate))
+		return xmlrpcInt(int64(torrent.DownRate))
 	case "d.up.rate":
-		return xmlrpcInt(int(torrent.UpRate))
+		return xmlrpcInt(int64(torrent.UpRate))
 	case "d.size_bytes":
-		return xmlrpcInt(int(torrent.Size))
+		return xmlrpcInt(int64(torrent.Size))
 	case "d.completed_bytes":
-		return xmlrpcInt(int(torrent.Completed))
+		return xmlrpcInt(int64(torrent.Completed))
 	case "d.ratio":
-		return xmlrpcInt(int(torrent.Ratio * 1000))
+		return xmlrpcInt(int64(torrent.Ratio * 1000))
 	case "d.up.total":
-		return xmlrpcInt(int(torrent.UpTotal))
+		return xmlrpcInt(int64(torrent.UpTotal))
 	case "d.load_date":
-		return xmlrpcInt(int(torrent.Age))
+		return xmlrpcInt(int64(torrent.Age))
 	case "d.message":
 		return xmlrpcString(torrent.Message)
 	case "d.base_path":
@@ -390,4 +390,4 @@ func xmlrpcString(text string) string {
 	return "<string>" + escaped.String() + "</string>"
 }
 
-func xmlrpcInt(n int) string { return fmt.Sprintf("<i8>%d</i8>", n) }
+func xmlrpcInt(n int64) string { return fmt.Sprintf("<i8>%d</i8>", n) }
