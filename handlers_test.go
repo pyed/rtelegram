@@ -86,7 +86,9 @@ func TestCommandHandlers(t *testing.T) {
 			{is: "sort: unknown sorting method"},
 		}, nil},
 		{"info", []string{"in bbbbbbb"}, []reply{{has: []string{"Ubuntu\nSeeding 2.0 KiB (100%)", "R: 1.50 UP: 3.0 KiB", "Tracker: tracker.other.net"}}}, nil},
-		{"info needs a long prefix", []string{"info bb"}, []reply{{is: "info: torrent hash prefix must contain at least 7 characters"}}, nil},
+		{"info takes one character", []string{"info b"}, []reply{{has: []string{"Ubuntu\nSeeding"}}}, nil},
+		{"info takes a bracketed prefix", []string{"info <bbbbbbb>"}, []reply{{has: []string{"Ubuntu\nSeeding"}}}, nil},
+		{"stop takes short prefixes", []string{"sp a cc"}, []reply{{is: "Stopped: Debian, Arch"}}, calledWith("d.stop", "A", "C")},
 		{"stop", []string{"sp aaaaaaa"}, []reply{{is: "Stopped: Debian"}}, calledWith("d.stop", "A")},
 		{"start all", []string{"st all"}, []reply{{is: "Started: Debian, Ubuntu, Arch, Fedora, Gentoo"}},
 			calledWith("d.start", "A", "B", "C", "D", "E")},
@@ -96,7 +98,7 @@ func TestCommandHandlers(t *testing.T) {
 			{is: "Deleted: Gentoo"},
 			{has: []string{"Debian"}, lacks: []string{"Gentoo"}},
 		}, calledWith("d.erase", "E")},
-		{"del refuses all", []string{"del all"}, []reply{{is: "del: torrent hash prefix must contain at least 7 characters"}}, calledWith("d.erase")},
+		{"del refuses all", []string{"del all"}, []reply{{is: `del: no torrent matches hash prefix "all"`}}, calledWith("d.erase")},
 		{"stats", []string{"sa"}, []reply{{is: "Throttle: off / off\nPort: 6890\nDirectory: /downloads\n" +
 			"Session uploaded: 3.0 GiB\nSession downloaded: 5.0 GiB\n" +
 			"Loaded torrents uploaded: 3.5 KiB\nLoaded torrents downloaded: 3.5 KiB\nLoaded torrents ratio: 1.00"}}, nil},

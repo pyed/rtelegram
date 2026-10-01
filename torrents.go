@@ -81,24 +81,30 @@ func torrentRef(torrent *rtapi.Torrent, prefixes map[string]string) string {
 	return hash
 }
 
+// resolveTorrent returns the one torrent whose hash starts with reference,
+// which may be as short as one character. A prefix copied from a list with
+// its angle brackets also works.
 func resolveTorrent(torrents rtapi.Torrents, reference string) (*rtapi.Torrent, error) {
 	reference = strings.ToLower(strings.TrimSpace(reference))
-	if len(reference) < 7 {
-		return nil, errors.New("torrent hash prefix must contain at least 7 characters")
+	reference = strings.TrimSuffix(strings.TrimPrefix(reference, "<"), ">")
+	if reference == "" {
+		return nil, errors.New("a torrent hash prefix is required")
 	}
 	var match *rtapi.Torrent
+	matches := 0
 	for _, torrent := range torrents {
 		if strings.HasPrefix(strings.ToLower(torrent.Hash), reference) {
-			if match != nil {
-				return nil, fmt.Errorf("torrent hash prefix %q is ambiguous", reference)
-			}
 			match = torrent
+			matches++
 		}
 	}
-	if match == nil {
+	switch matches {
+	case 0:
 		return nil, fmt.Errorf("no torrent matches hash prefix %q", reference)
+	case 1:
+		return match, nil
 	}
-	return match, nil
+	return nil, fmt.Errorf("hash prefix %q matches %d torrents; give more of the hash", reference, matches)
 }
 
 func selectTorrents(torrents rtapi.Torrents, references []string, allowAll bool) (rtapi.Torrents, error) {

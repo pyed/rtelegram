@@ -223,8 +223,20 @@ func TestStableHashPrefixesResolveAcrossReorder(t *testing.T) {
 	if err != nil || len(selected) != 2 {
 		t.Fatalf("selected %d torrents: %v", len(selected), err)
 	}
-	if _, err := resolveTorrent(torrents, "abcdef0"); err == nil {
-		t.Fatal("ambiguous prefix was accepted")
+	for _, ambiguous := range []string{"a", "abcdef0"} {
+		if _, err := resolveTorrent(torrents, ambiguous); err == nil || !strings.Contains(err.Error(), "matches 2 torrents") {
+			t.Fatalf("ambiguous prefix %q: %v", ambiguous, err)
+		}
+	}
+	for unique, want := range map[string]*rtapi.Torrent{"abcdef01": first, "ABCDEF09": second, "<abcdef09>": second} {
+		if resolved, err := resolveTorrent(torrents, unique); err != nil || resolved != want {
+			t.Fatalf("resolveTorrent(%q) = %v, %v", unique, resolved, err)
+		}
+	}
+	for _, empty := range []string{"", " ", "<>"} {
+		if _, err := resolveTorrent(rtapi.Torrents{first}, empty); err == nil {
+			t.Fatalf("resolveTorrent(%q) succeeded", empty)
+		}
 	}
 	if _, err := selectTorrents(nil, []string{"all"}, true); err == nil {
 		t.Fatal("empty all-selection reported a successful mutation")
