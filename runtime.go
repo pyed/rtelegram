@@ -72,13 +72,20 @@ func (a *application) send(ctx context.Context, chatID int64, text string) (int,
 	_, _ = a.bot.SendChatAction(ctx, &telegram.SendChatActionParams{
 		ChatID: chatID, MessageThreadID: messageThreadID, Action: models.ChatActionTyping,
 	})
+	if len(chunks) > maxMessageChunks {
+		return 0, a.sendFile(ctx, chatID, messageThreadID, text)
+	}
 	messageID := 0
 	for _, chunk := range chunks {
-		message, err := a.bot.SendMessage(ctx, &telegram.SendMessageParams{
-			ChatID:             chatID,
-			MessageThreadID:    messageThreadID,
-			Text:               chunk,
-			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: telegram.True()},
+		var message *models.Message
+		err := a.retryRateLimited(ctx, func() (err error) {
+			message, err = a.bot.SendMessage(ctx, &telegram.SendMessageParams{
+				ChatID:             chatID,
+				MessageThreadID:    messageThreadID,
+				Text:               chunk,
+				LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: telegram.True()},
+			})
+			return err
 		})
 		if err != nil {
 			clean := redact(a.token, err.Error())
@@ -91,6 +98,45 @@ func (a *application) send(ctx context.Context, chatID int64, text string) (int,
 		return 0, nil
 	}
 	return messageID, nil
+}
+
+// sendFile attaches text as a file, for replies too long to read as messages.
+func (a *application) sendFile(ctx context.Context, chatID int64, messageThreadID int, text string) error {
+	err := a.retryRateLimited(ctx, func() error {
+		_, err := a.bot.SendDocument(ctx, &telegram.SendDocumentParams{
+			ChatID:          chatID,
+			MessageThreadID: messageThreadID,
+			Document:        &models.InputFileUpload{Filename: "rtelegram.txt", Data: strings.NewReader(text)},
+			Caption:         "This reply is too long for chat messages, so it is attached as a file.",
+		})
+		return err
+	})
+	if err != nil {
+		clean := redact(a.token, err.Error())
+		a.logger.Printf("[ERROR] Send file: %s", clean)
+		return errors.New(clean)
+	}
+	return nil
+}
+
+// retryRateLimited repeats a Telegram request while Telegram answers 429 Too
+// Many Requests, waiting as long as Telegram asks.
+func (a *application) retryRateLimited(ctx context.Context, request func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := request()
+		var limited *telegram.TooManyRequestsError
+		if !errors.As(err, &limited) || attempt == maxTelegramAttempts {
+			return err
+		}
+		wait := time.Duration(limited.RetryAfter) * time.Second
+		if wait > maxRetryAfter {
+			return err
+		}
+		a.logger.Printf("[WARN] Telegram rate limit; retrying in %s", wait)
+		if !waitFor(ctx, wait) {
+			return err
+		}
+	}
 }
 
 func (a *application) edit(ctx context.Context, chatID int64, messageID int, text string) error {

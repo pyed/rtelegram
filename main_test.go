@@ -240,11 +240,22 @@ type fakeTelegram struct {
 	file         []byte
 	getFileCalls int
 	sent         chan sentMessage
+	// rateLimited answers that many sendMessage calls with 429 and retryAfter.
+	rateLimited  int
+	retryAfter   int
+	sendAttempts int
+	documents    []sentDocument
 }
 
 type sentMessage struct {
 	chatID int64
 	text   string
+}
+
+type sentDocument struct {
+	chatID   int64
+	filename string
+	content  string
 }
 
 type errorHTTPClient struct{ err error }
@@ -264,6 +275,12 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 	case "sendChatAction":
 		result = "true"
 	case "sendMessage":
+		f.sendAttempts++
+		if f.rateLimited > 0 {
+			f.rateLimited--
+			return response(http.StatusTooManyRequests, fmt.Sprintf(
+				`{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":%d}}`, f.retryAfter)), nil
+		}
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
 		threadID, _ := strconv.Atoi(request.FormValue("message_thread_id"))
 		f.chatIDs = append(f.chatIDs, chatID)
@@ -277,6 +294,19 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
 		f.chatIDs = append(f.chatIDs, chatID)
 		f.methods = append(f.methods, method)
+		result = fmt.Sprintf(`{"message_id":1,"date":0,"chat":{"id":%d,"type":"private"}}`, chatID)
+	case "sendDocument":
+		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
+		upload, header, err := request.FormFile("document")
+		if err != nil {
+			return nil, err
+		}
+		content, err := io.ReadAll(upload)
+		upload.Close()
+		if err != nil {
+			return nil, err
+		}
+		f.documents = append(f.documents, sentDocument{chatID: chatID, filename: header.Filename, content: string(content)})
 		result = fmt.Sprintf(`{"message_id":1,"date":0,"chat":{"id":%d,"type":"private"}}`, chatID)
 	case "getFile":
 		f.getFileCalls++
@@ -326,6 +356,98 @@ func TestSendRoutesToExplicitChat(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fake.methods, []string{"sendMessage", "sendMessage", "editMessageText", "sendMessage"}) {
 		t.Fatalf("Telegram methods = %v", fake.methods)
+	}
+}
+
+func TestWhoamiReportsUserAndChatIDs(t *testing.T) {
+	fake := &fakeTelegram{sent: make(chan sentMessage, 1)}
+	app := &application{
+		bot: newTestBot(t, fake, "123:SECRET"), logger: log.New(io.Discard, "", 0), token: "123:SECRET",
+		masters: principals{usernames: map[string]struct{}{"alice": {}}}, botUsername: "ThisBot",
+	}
+	app.handle(context.Background(), &models.Update{Message: &models.Message{
+		From: &models.User{ID: 4242, Username: "Alice"}, Chat: models.Chat{ID: -100, Type: models.ChatTypeSupergroup},
+		Text: "/whoami@ThisBot",
+	}})
+	message := <-fake.sent
+	if message.chatID != -100 || !strings.HasPrefix(message.text, "User ID: 4242 (@Alice)\nChat ID: -100\n") {
+		t.Fatalf("whoami reply = %+v", message)
+	}
+}
+
+func TestUnauthorizedPrivateUsersAreLoggedOnce(t *testing.T) {
+	fake := &fakeTelegram{}
+	var logs bytes.Buffer
+	app := &application{
+		bot: newTestBot(t, fake, "123:SECRET"), logger: log.New(&logs, "", 0), token: "123:SECRET",
+		masters: principals{ids: map[int64]struct{}{7: {}}},
+	}
+	stranger := &models.User{ID: 555, Username: "mallory"}
+	for _, chat := range []models.Chat{
+		{ID: 555, Type: models.ChatTypePrivate},
+		{ID: 555, Type: models.ChatTypePrivate},
+		{ID: -100, Type: models.ChatTypeGroup},
+	} {
+		app.handle(context.Background(), &models.Update{Message: &models.Message{From: stranger, Chat: chat, Text: "/list"}})
+	}
+	app.handle(context.Background(), &models.Update{Message: &models.Message{
+		From: &models.User{ID: 666}, Chat: models.Chat{ID: -100, Type: models.ChatTypeGroup}, Text: "/list",
+	}})
+	if got := strings.Count(logs.String(), "unauthorized Telegram user ID 555 (@mallory)"); got != 1 {
+		t.Fatalf("logged the stranger %d times: %q", got, logs.String())
+	}
+	if strings.Contains(logs.String(), "666") || len(fake.methods) != 0 {
+		t.Fatalf("group member logged or replied to: logs=%q methods=%v", logs.String(), fake.methods)
+	}
+}
+
+func TestSendRetriesRateLimitedMessages(t *testing.T) {
+	fake := &fakeTelegram{rateLimited: 2}
+	var logs bytes.Buffer
+	app := &application{bot: newTestBot(t, fake, "123:SECRET"), logger: log.New(&logs, "", 0), token: "123:SECRET"}
+	if _, err := app.send(context.Background(), 111, "Completed: debian.iso"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.sendAttempts != 3 || !reflect.DeepEqual(fake.chatIDs, []int64{111}) {
+		t.Fatalf("attempts=%d delivered to %v", fake.sendAttempts, fake.chatIDs)
+	}
+	if !strings.Contains(logs.String(), "rate limit") {
+		t.Fatalf("retries were not logged: %q", logs.String())
+	}
+}
+
+func TestSendGivesUpOnLongRateLimits(t *testing.T) {
+	fake := &fakeTelegram{rateLimited: 1, retryAfter: 3600}
+	app := &application{bot: newTestBot(t, fake, "123:SECRET"), logger: log.New(io.Discard, "", 0), token: "123:SECRET"}
+	started := time.Now()
+	_, err := app.send(context.Background(), 111, "hello")
+	if err == nil || !strings.Contains(err.Error(), "retry_after 3600") {
+		t.Fatalf("expected the rate-limit error, got %v", err)
+	}
+	if fake.sendAttempts != 1 || time.Since(started) > time.Second {
+		t.Fatalf("attempts=%d after %s", fake.sendAttempts, time.Since(started))
+	}
+}
+
+func TestSendAttachesLongRepliesAsFile(t *testing.T) {
+	fake := &fakeTelegram{}
+	app := &application{bot: newTestBot(t, fake, "123:SECRET"), logger: log.New(io.Discard, "", 0), token: "123:SECRET"}
+	fits := strings.Repeat("x", maxTelegramMessage*maxMessageChunks)
+	if _, err := app.send(context.Background(), 111, fits); err != nil {
+		t.Fatal(err)
+	}
+	if fake.sendAttempts != maxMessageChunks || len(fake.documents) != 0 {
+		t.Fatalf("%d-chunk reply: %d messages, %d files", maxMessageChunks, fake.sendAttempts, len(fake.documents))
+	}
+
+	long := strings.Repeat("<abcdef0> some.torrent.name\n", 1000)
+	messageID, err := app.send(context.Background(), 222, long)
+	if err != nil || messageID != 0 {
+		t.Fatalf("messageID=%d err=%v", messageID, err)
+	}
+	want := []sentDocument{{chatID: 222, filename: "rtelegram.txt", content: long}}
+	if fake.sendAttempts != maxMessageChunks || !reflect.DeepEqual(fake.documents, want) {
+		t.Fatalf("long reply: %d messages, files %+v", fake.sendAttempts, fake.documents)
 	}
 }
 

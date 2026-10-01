@@ -35,7 +35,7 @@ trackers (tr), search (se) QUERY, latest (la) [count]
 add (ad) URL..., info (in) HASH...
 stop (sp), start (st), check (ck) HASH...|all
 del HASH..., deldata HASH confirm
-stats (sa), speed (ss), count (co), help, version
+stats (sa), speed (ss), count (co), whoami, help, version
 
 Torrent references are the stable hash prefixes shown by list commands.
 In groups, commands must start with /.`
@@ -46,6 +46,13 @@ const (
 	defaultLiveUpdates  = 5
 	maxTelegramMessage  = 4096
 	maxTorrentFileSize  = 16 << 20
+	// Replies longer than this many messages are attached as a text file.
+	maxMessageChunks    = 3
+	maxTelegramAttempts = 4
+	// Longer rate-limit waits are not worth holding the bot for.
+	maxRetryAfter = 2 * time.Minute
+	// Unauthorized users are logged once each, up to this many.
+	maxIgnoredUsers = 1000
 )
 
 type principals struct {
@@ -91,9 +98,11 @@ type application struct {
 	interval     time.Duration
 	duration     int
 
-	sortMu sync.RWMutex
-	sorts  map[int64]sortPreference
-	wg     sync.WaitGroup
+	sortMu    sync.RWMutex
+	sorts     map[int64]sortPreference
+	ignoredMu sync.Mutex
+	ignored   map[int64]struct{}
+	wg        sync.WaitGroup
 }
 
 func main() {
@@ -129,7 +138,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		logger.SetOutput(logFile)
 	}
 	for _, name := range cfg.legacyUsernames {
-		logger.Printf("[WARN] legacy username master @%s is mutable; prefer a numeric Telegram user ID", name)
+		logger.Printf("[WARN] legacy username master @%s is mutable; prefer a numeric Telegram user ID (send /whoami to the bot to see it)", name)
 	}
 
 	httpClient := &http.Client{Timeout: 70 * time.Second}
@@ -320,10 +329,14 @@ func documentOptions(message *models.Message, botUsername string) (string, bool)
 }
 
 func (a *application) handle(ctx context.Context, update *models.Update) {
-	if update == nil || update.Message == nil || !a.masters.authorized(update.Message.From) {
+	if update == nil || update.Message == nil {
 		return
 	}
 	message := update.Message
+	if !a.masters.authorized(message.From) {
+		a.logIgnored(message)
+		return
+	}
 	if message.MessageThreadID != 0 {
 		ctx = context.WithValue(ctx, messageThreadIDKey{}, message.MessageThreadID)
 	}
@@ -388,6 +401,8 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.del(ctx, chatID, args)
 	case "deldata":
 		a.deldata(ctx, chatID, args)
+	case "whoami":
+		a.whoami(ctx, chatID, message.From)
 	case "help":
 		a.send(ctx, chatID, helpText)
 	case "version":
@@ -395,6 +410,38 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 	default:
 		a.send(ctx, chatID, "no such command, try /help")
 	}
+}
+
+// logIgnored logs the numeric ID of each unauthorized user who messages the
+// bot privately, once, so an operator can find the ID to authorize. Group
+// members are not logged.
+func (a *application) logIgnored(message *models.Message) {
+	if message.From == nil || message.Chat.Type != models.ChatTypePrivate {
+		return
+	}
+	a.ignoredMu.Lock()
+	defer a.ignoredMu.Unlock()
+	if _, seen := a.ignored[message.From.ID]; seen || len(a.ignored) >= maxIgnoredUsers {
+		return
+	}
+	if a.ignored == nil {
+		a.ignored = make(map[int64]struct{})
+	}
+	a.ignored[message.From.ID] = struct{}{}
+	username := ""
+	if message.From.Username != "" {
+		username = " (@" + message.From.Username + ")"
+	}
+	a.logger.Printf("[WARN] Ignored a private message from unauthorized Telegram user ID %d%s", message.From.ID, username)
+}
+
+func (a *application) whoami(ctx context.Context, chatID int64, user *models.User) {
+	username := ""
+	if user.Username != "" {
+		username = " (@" + user.Username + ")"
+	}
+	a.send(ctx, chatID, fmt.Sprintf("User ID: %d%s\nChat ID: %d\n\nUse the user ID in RT_MASTERS, and the chat ID with -notify-chat-id.",
+		user.ID, username, chatID))
 }
 
 func redact(secret, text string) string {

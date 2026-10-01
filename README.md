@@ -14,21 +14,49 @@ Download a binary from the
 go install github.com/pyed/rtelegram/v2@latest
 ```
 
-rTorrent must provide a local XML-RPC SCGI endpoint. A protected Unix socket is
-preferred; a loopback TCP address such as `127.0.0.1:5000` also works.
+## Set up
+
+1. **Give rTorrent an SCGI endpoint.** rTorrent must be built with XML-RPC
+   support. Add one of these to `rtorrent.rc` and restart rTorrent:
+
+   ```
+   # A local socket (preferred). Run rtelegram as the same user as rTorrent,
+   # or keep the socket in a directory only those users can reach.
+   network.scgi.open_local = /home/user/rtorrent/rpc.socket
+
+   # Or loopback TCP.
+   network.scgi.open_port = 127.0.0.1:5000
+   ```
+
+2. **Create a bot.** Message [@BotFather](https://t.me/BotFather), send
+   `/newbot`, and follow the prompts. It replies with the bot's token.
+
+3. **Find your numeric Telegram user ID.** Start the bot with your `@username`
+   as a temporary master, then send it `/whoami`:
+
+   ```sh
+   RT_TOKEN=123456:secret RT_MASTERS=@yourname rtelegram -url /home/user/rtorrent/rpc.socket
+   ```
+
+   If you have no username, start it with any placeholder ID instead, such as
+   `RT_MASTERS=1`, and message the bot privately. The log shows
+   `Ignored a private message from unauthorized Telegram user ID ...` with your
+   ID.
+
+4. **Run it with your ID.**
+
+   ```sh
+   RT_TOKEN=123456:secret RT_MASTERS=123456789 rtelegram -url /home/user/rtorrent/rpc.socket
+   ```
+
+   Send `/help` to the bot for the command list.
 
 ## Configure
 
-The bot requires a token and at least one authorized Telegram user:
-
-```sh
-RT_TOKEN=123456:secret RT_MASTERS=123456789 rtelegram -url /run/user/1000/rtorrent.sock
-```
-
-`RT_MASTERS` is a comma-separated list. Stable numeric Telegram user IDs are
-preferred. Legacy usernames are still accepted for compatibility, but the bot
-warns because usernames can be changed or reassigned. Empty or malformed entries
-are rejected.
+`RT_MASTERS` is a comma-separated list of the Telegram users the bot answers.
+Stable numeric user IDs are preferred. Usernames are still accepted, but the bot
+warns because they can be changed or reassigned. Empty or malformed entries are
+rejected.
 
 Key flags:
 
@@ -42,11 +70,62 @@ Key flags:
   an explicit `-notify-chat-id` destination.
 - `-data-root` enables `deldata` only beneath that absolute, same-host directory.
 
-Run `/help` for the command list. Torrent operations use the unique hash prefixes
-shown by list commands rather than unstable list positions. Group commands must
-start with `/`; a torrent document posted in a group must use `/add` (or `/ad`)
-as its caption. Replies to commands in Telegram forum topics stay in the same
-topic. Private-chat document captions remain download-directory/label options.
+## Commands
+
+Torrents are referenced by the hash prefix that list commands show in angle
+brackets, such as `<1c60cbe>`.
+
+| Command | Alias | What it does |
+|---|---|---|
+| `list [tracker]` | `li` | List torrents, optionally only those whose tracker matches |
+| `head [n]` / `tail [n]` | `he` / `ta` | Show the first or last n torrents (default 5) with live updates |
+| `down`, `seeding`, `paused`, `checking` | `dl`, `sd`, `pa`, `ch` | List torrents in that state |
+| `active` | `ac` | Show torrents currently transferring, with live updates |
+| `errors` | `er` | List torrents with errors, and the error |
+| `sort [rev] name\|downrate\|uprate\|size\|ratio\|age\|upload` | `so` | Set this chat's sort order |
+| `trackers` | `tr` | Count torrents per tracker |
+| `search QUERY` | `se` | List torrents whose name contains QUERY |
+| `latest [n]` | `la` | List the n most recently added torrents |
+| `add URL...` | `ad` | Add torrents from URLs or magnet links |
+| `info HASH...` | `in` | Show details, with live updates |
+| `start`, `stop`, `check` `HASH...\|all` | `st`, `sp`, `ck` | Start, stop, or verify torrents |
+| `del HASH...` | | Remove torrents from rTorrent and keep their data |
+| `deldata HASH confirm` | | Remove a torrent and its data (see below) |
+| `stats`, `speed`, `count` | `sa`, `ss`, `co` | Show totals, current speeds, or torrents per state |
+| `whoami` | | Show your user ID and this chat's ID |
+| `help`, `version` | | |
+
+To add a `.torrent` file, send it to the bot. In a private chat the caption can
+set the download directory and label, as `d=/path` and `l=label`. In a group,
+the file needs `/add` as its caption. Files are limited to 16 MiB. The bot
+downloads the file inside the Telegram trust boundary and passes raw bytes to
+rTorrent, so the bot token is never embedded in an SCGI request.
+
+Group commands must start with `/`, and replies to commands in forum topics stay
+in the same topic.
+
+rTorrent multicalls are not transactional. If a batched start, stop, check, or
+metadata deletion fails, the bot warns that some selected torrents may already
+have changed and tells the operator to refresh before retrying.
+
+Replies longer than three messages arrive as a text file. When Telegram limits
+how fast the bot may send, the bot waits as long as Telegram asks and retries.
+
+## Completion notifications
+
+Have rTorrent log each finished torrent's name to a file by adding this to
+`rtorrent.rc`:
+
+```
+method.set_key = event.download.finished, log_completed, \
+	"execute.nothrow = sh, -c, \"echo >> /path/to/completed.log \\\"$0\\\"\", $d.name="
+```
+
+Then start rtelegram with `-completed-torrents-logfile=/path/to/completed.log`
+and `-notify-chat-id` set to the chat that should receive notifications. Send
+`/whoami` in that chat to see its ID.
+
+## Deleting data
 
 `deldata HASH confirm` is intentionally stricter than ordinary deletion. It is
 disabled without `-data-root`, rejects roots, parents, symlink targets, and paths
@@ -57,13 +136,16 @@ only for torrents it has opened, so unopened torrents are located through
 the contained local path. If local removal fails after metadata erasure, the bot
 reports that partial outcome explicitly.
 
-rTorrent multicalls are not transactional. If a batched start, stop, check, or
-metadata deletion fails, the bot warns that some selected torrents may already
-have changed and tells the operator to refresh before retrying.
+## Upgrading from v1
 
-Telegram file uploads are limited to 16 MiB. The bot downloads the file inside
-the Telegram trust boundary and passes raw bytes to rTorrent, so the bot token is
-never embedded in an SCGI request.
+- Install from `github.com/pyed/rtelegram/v2`.
+- Torrents are referenced by hash prefix, not by their position in a list.
+- Prefer numeric user IDs in `RT_MASTERS`. `/whoami` shows yours.
+- `-completed-torrents-logfile` now requires `-notify-chat-id`. v1 sent
+  notifications to whichever chat used the bot last.
+- `deldata` requires `-data-root` and the form `deldata HASH confirm`.
+- In groups, commands must start with `/`, and torrent files need an `/add`
+  caption.
 
 ## Security
 
