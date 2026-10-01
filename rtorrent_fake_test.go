@@ -25,6 +25,7 @@ type fakeRtorrent struct {
 	downRate  uint64
 	upRate    uint64
 	limits    [2]uint64               // global down and up rate limits
+	totals    [2]uint64               // session uploaded and downloaded bytes
 	freeSpace uint64                  // d.free_diskspace for every torrent
 	files     map[string][]rtapi.File // by torrent hash
 	load      func(body string) *rtapi.Torrent
@@ -44,7 +45,7 @@ func newFakeRtorrent(t *testing.T, torrents ...*rtapi.Torrent) (*fakeRtorrent, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &fakeRtorrent{t: t, torrents: torrents, directory: "/downloads"}
+	fake := &fakeRtorrent{t: t, torrents: torrents, directory: "/downloads", totals: [2]uint64{3 << 30, 5 << 30}}
 	var connections sync.WaitGroup
 	connections.Add(1)
 	go func() {
@@ -246,9 +247,9 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 	case "throttle.up.max", "throttle.down.max":
 		return xmlrpcInt(0), false
 	case "throttle.global_up.total":
-		return xmlrpcInt(3 << 30), false
+		return xmlrpcInt(int64(f.totals[0])), false
 	case "throttle.global_down.total":
-		return xmlrpcInt(5 << 30), false
+		return xmlrpcInt(int64(f.totals[1])), false
 	case "network.listen.port":
 		return xmlrpcInt(6890), false
 	case "directory.default":

@@ -29,6 +29,8 @@ type stateData struct {
 	Quiet *quietHours `json:"quiet,omitempty"`
 	// Watch holds the rules that add new search results automatically.
 	Watch []watchRule `json:"watch,omitempty"`
+	// Digest holds each chat's daily digest.
+	Digest map[int64]digestSettings `json:"digest,omitempty"`
 }
 
 type notifySettings struct {

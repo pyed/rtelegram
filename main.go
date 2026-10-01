@@ -40,7 +40,7 @@ stop (sp), start (st), check (ck) HASH...|all
 del HASH..., deldata HASH [confirm]
 stats (sa), speed (ss), count (co), notify [on|off], whoami, help, version
 limit [down N] [up N]|off, quiet HH:MM-HH:MM down N [up N]|off
-find QUERY, watch [add NAME QUERY|del NAME]
+find QUERY, watch [add NAME QUERY|del NAME], digest HH:MM|now|off
 
 Torrent references are the stable hash prefixes shown by list commands.
 In groups, commands must start with /.`
@@ -223,6 +223,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
 	app.launch(ctx, app.watchEvents)
 	app.launch(ctx, app.watchQuiet)
+	app.launch(ctx, app.watchDigest)
 	if cfg.indexerURL != "" {
 		app.indexer = newIndexer(cfg.indexerURL, cfg.indexerKey)
 		logger.Printf("[INFO] Indexer: %s", indexerName(cfg.indexerURL))
@@ -503,6 +504,8 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.limit(ctx, chatID, args)
 	case "quiet":
 		a.quiet(ctx, chatID, args)
+	case "digest":
+		a.digest(ctx, chatID, args)
 	case "find":
 		a.find(ctx, chatID, args)
 	case "watch":

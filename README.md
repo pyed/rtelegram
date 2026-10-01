@@ -127,6 +127,7 @@ brackets, such as `<1c60cbe>`.
 | `notify [on\|off]` | | Choose which notifications this chat gets |
 | `limit [down N] [up N]\|off` | | Show or set the global speed limits |
 | `quiet HH:MM-HH:MM down N [up N]\|off` | | Lower the limits every night |
+| `digest HH:MM\|now\|off` | | Get a daily summary in this chat |
 | `find QUERY` | | Search an indexer and add a result with a tap |
 | `watch [add NAME QUERY\|del NAME]` | | Add new releases for a search automatically |
 | `whoami` | | Show your user ID and this chat's ID |
@@ -217,6 +218,16 @@ The bot checks rTorrent itself every `-watch-interval`, so nothing needs to be
 added to `rtorrent.rc`. Torrents that finish while the bot is offline are
 announced when it starts again. Subscriptions are kept in the `-state` file. A
 chat that blocks or removes the bot is unsubscribed.
+
+## Daily digest
+
+`/digest 08:00` sends this chat a summary every day at that time: torrents
+completed and added in the last day, how much was uploaded and downloaded since
+the previous digest, how many torrents are in each state, current speeds, and
+free space. `/digest now` shows one straight away, `/digest off` stops it, and
+`/digest` shows when it comes. A digest missed while the bot was offline comes
+as soon as it is back, at most once a day, and in a group it goes to the topic
+`/digest` was sent from.
 
 ## Deleting data
 
