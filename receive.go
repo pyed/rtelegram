@@ -37,7 +37,7 @@ func (a *application) receiveTorrent(ctx context.Context, chatID int64, message 
 		a.send(ctx, chatID, fmt.Sprintf("receiver: %s is not a valid torrent file: %s", document.FileName, err))
 		return
 	}
-	before, err := a.loadedHashes()
+	before, err := a.loadedHashes(ctx)
 	if err != nil {
 		a.send(ctx, chatID, "receiver: "+err.Error())
 		return
@@ -47,12 +47,12 @@ func (a *application) receiveTorrent(ctx context.Context, chatID int64, message 
 		return
 	}
 	directory, label := processOptions(caption)
-	if directory, err = a.downloadDirectory(directory); err != nil {
+	if directory, err = a.downloadDirectory(ctx, directory); err != nil {
 		a.send(ctx, chatID, "receiver: "+err.Error())
 		return
 	}
 	options := &rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: label}
-	if err := a.rtorrent.DownloadRaw(data, options); err != nil {
+	if err := a.rtorrent.DownloadRawContext(ctx, data, options); err != nil {
 		a.logger.Printf("add uploaded torrent: %s", redact(a.token, err.Error()))
 		a.send(ctx, chatID, "receiver: "+redact(a.token, err.Error()))
 		return
@@ -173,13 +173,13 @@ func (a *application) downloadTelegramFile(ctx context.Context, fileID string) (
 // downloadDirectory confines a caption's download directory to the download
 // root, so a caption cannot make rTorrent write anywhere else on its host. The
 // root is -download-root, or rTorrent's default directory when that is unset.
-func (a *application) downloadDirectory(requested string) (string, error) {
+func (a *application) downloadDirectory(ctx context.Context, requested string) (string, error) {
 	if requested == "" {
 		return "", nil
 	}
 	root := a.downloadRoot
 	if root == "" {
-		stats, err := a.rtorrent.Stats()
+		stats, err := a.rtorrent.StatsContext(ctx)
 		if err != nil {
 			return "", err
 		}

@@ -172,8 +172,8 @@ func (a *application) getVersion(ctx context.Context, chatID int64) {
 	a.send(ctx, chatID, fmt.Sprintf("rTorrent/libtorrent: %s\nrtelegram: %s", a.rtorrent.Version, version))
 }
 
-func (a *application) torrents(chatID int64) (rtapi.Torrents, error) {
-	torrents, err := a.rtorrent.Torrents()
+func (a *application) torrents(ctx context.Context, chatID int64) (rtapi.Torrents, error) {
+	torrents, err := a.rtorrent.TorrentsContext(ctx)
 	if err != nil {
 		return nil, err
 	}

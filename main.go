@@ -172,7 +172,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if err != nil {
 		return fmt.Errorf("telegram authorization: %s", redact(cfg.token, err.Error()))
 	}
-	rtorrent, err := rtapi.NewRtorrent(cfg.scgiURL)
+	rtorrent, err := rtapi.NewRtorrentContext(ctx, cfg.scgiURL)
 	if err != nil {
 		return fmt.Errorf("rTorrent: %w", err)
 	}

@@ -532,6 +532,29 @@ func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 	}
 }
 
+func TestShutdownInterruptsWaitingForRtorrent(t *testing.T) {
+	rtorrentFake, client := newFakeRtorrent(t)
+	stall := make(chan struct{})
+	rtorrentFake.set(func(f *fakeRtorrent) { f.stall = stall })
+	t.Cleanup(func() { close(stall) })
+	app := &application{
+		bot: newTestBot(t, &fakeTelegram{}, "123:SECRET"), rtorrent: client,
+		logger: log.New(io.Discard, "", 0), token: "123:SECRET",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		app.list(ctx, 111, nil)
+	}()
+	time.AfterFunc(20*time.Millisecond, cancel)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("list kept waiting for rTorrent after shutdown")
+	}
+}
+
 func TestConfineDirectory(t *testing.T) {
 	tests := []struct{ root, requested, want string }{
 		{"/data", "movies", "/data/movies"},

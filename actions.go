@@ -41,7 +41,7 @@ func (a *application) addSource(ctx context.Context, chatID int64, source string
 	if name == "" {
 		name = sourceName(source)
 	}
-	before, err := a.loadedHashes()
+	before, err := a.loadedHashes(ctx)
 	if err != nil {
 		a.send(ctx, chatID, "add: "+err.Error())
 		return
@@ -50,7 +50,7 @@ func (a *application) addSource(ctx context.Context, chatID int64, source string
 		a.send(ctx, chatID, "add: "+name+" is already loaded")
 		return
 	}
-	if err := a.rtorrent.Download(source); err != nil {
+	if err := a.rtorrent.DownloadContext(ctx, source); err != nil {
 		a.logger.Printf("add: %s", err)
 		a.send(ctx, chatID, "add: "+err.Error())
 		return
@@ -58,8 +58,8 @@ func (a *application) addSource(ctx context.Context, chatID int64, source string
 	a.confirmAdded(ctx, chatID, "add", name, hash, before)
 }
 
-func (a *application) loadedHashes() (map[string]bool, error) {
-	torrents, err := a.rtorrent.Torrents()
+func (a *application) loadedHashes(ctx context.Context) (map[string]bool, error) {
+	torrents, err := a.rtorrent.TorrentsContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func (a *application) confirmAdded(ctx context.Context, chatID int64, label, nam
 	deadline := time.Now().Add(a.addTimeout)
 	var lastErr error
 	for {
-		torrents, err := a.rtorrent.Torrents()
+		torrents, err := a.rtorrent.TorrentsContext(ctx)
 		lastErr = err
 		if err == nil {
 			if added := findAdded(torrents, hash, before); added != nil {
@@ -171,8 +171,8 @@ func sourceName(source string) string {
 	return path.Base(source)
 }
 
-func (a *application) selected(chatID int64, references []string, allowAll bool) (rtapi.Torrents, error) {
-	torrents, err := a.torrents(chatID)
+func (a *application) selected(ctx context.Context, chatID int64, references []string, allowAll bool) (rtapi.Torrents, error) {
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -180,12 +180,12 @@ func (a *application) selected(chatID int64, references []string, allowAll bool)
 }
 
 func (a *application) start(ctx context.Context, chatID int64, references []string) {
-	torrents, err := a.selected(chatID, references, true)
+	torrents, err := a.selected(ctx, chatID, references, true)
 	if err != nil {
 		a.send(ctx, chatID, "start: "+err.Error())
 		return
 	}
-	if err := a.rtorrent.Start(torrents...); err != nil {
+	if err := a.rtorrent.StartContext(ctx, torrents...); err != nil {
 		a.logger.Printf("start: %s", err)
 		a.send(ctx, chatID, mutationError("start", len(torrents), err))
 		return
@@ -194,12 +194,12 @@ func (a *application) start(ctx context.Context, chatID int64, references []stri
 }
 
 func (a *application) stop(ctx context.Context, chatID int64, references []string) {
-	torrents, err := a.selected(chatID, references, true)
+	torrents, err := a.selected(ctx, chatID, references, true)
 	if err != nil {
 		a.send(ctx, chatID, "stop: "+err.Error())
 		return
 	}
-	if err := a.rtorrent.Stop(torrents...); err != nil {
+	if err := a.rtorrent.StopContext(ctx, torrents...); err != nil {
 		a.logger.Printf("stop: %s", err)
 		a.send(ctx, chatID, mutationError("stop", len(torrents), err))
 		return
@@ -208,12 +208,12 @@ func (a *application) stop(ctx context.Context, chatID int64, references []strin
 }
 
 func (a *application) check(ctx context.Context, chatID int64, references []string) {
-	torrents, err := a.selected(chatID, references, true)
+	torrents, err := a.selected(ctx, chatID, references, true)
 	if err != nil {
 		a.send(ctx, chatID, "check: "+err.Error())
 		return
 	}
-	if err := a.rtorrent.Check(torrents...); err != nil {
+	if err := a.rtorrent.CheckContext(ctx, torrents...); err != nil {
 		a.logger.Printf("check: %s", err)
 		a.send(ctx, chatID, mutationError("check", len(torrents), err))
 		return
@@ -222,12 +222,12 @@ func (a *application) check(ctx context.Context, chatID int64, references []stri
 }
 
 func (a *application) del(ctx context.Context, chatID int64, references []string) {
-	torrents, err := a.selected(chatID, references, false)
+	torrents, err := a.selected(ctx, chatID, references, false)
 	if err != nil {
 		a.send(ctx, chatID, "del: "+err.Error())
 		return
 	}
-	if err := a.rtorrent.DeleteMetadata(torrents...); err != nil {
+	if err := a.rtorrent.DeleteMetadataContext(ctx, torrents...); err != nil {
 		a.logger.Printf("del: %s", err)
 		a.send(ctx, chatID, mutationError("del", len(torrents), err))
 		return
@@ -240,7 +240,7 @@ func (a *application) deldata(ctx context.Context, chatID int64, arguments []str
 		a.send(ctx, chatID, "deldata: use deldata HASH confirm")
 		return
 	}
-	allTorrents, err := a.torrents(chatID)
+	allTorrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "deldata: "+err.Error())
 		return
@@ -261,7 +261,7 @@ func (a *application) deldata(ctx context.Context, chatID int64, arguments []str
 		a.send(ctx, chatID, "deldata: "+err.Error())
 		return
 	}
-	if err := a.rtorrent.DeleteMetadata(torrent); err != nil {
+	if err := a.rtorrent.DeleteMetadataContext(ctx, torrent); err != nil {
 		a.logger.Printf("deldata: %s", err)
 		a.send(ctx, chatID, "deldata: "+err.Error())
 		return

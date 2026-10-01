@@ -25,6 +25,7 @@ type fakeRtorrent struct {
 	downRate  uint64
 	upRate    uint64
 	load      func(body string) *rtapi.Torrent
+	stall     chan struct{} // when set, requests wait until it is closed
 	requests  []string
 	calls     []fakeCall
 }
@@ -167,6 +168,12 @@ func texts(values []xmlrpcCallValue) []string {
 }
 
 func (f *fakeRtorrent) respond(body string) string {
+	f.mu.Lock()
+	stall := f.stall
+	f.mu.Unlock()
+	if stall != nil {
+		<-stall
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, body)

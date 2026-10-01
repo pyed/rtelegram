@@ -38,7 +38,7 @@ func filterTorrents(torrents rtapi.Torrents, keep func(*rtapi.Torrent) bool) rta
 }
 
 func (a *application) list(ctx context.Context, chatID int64, arguments []string) {
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "list: "+err.Error())
 		return
@@ -98,7 +98,7 @@ func (a *application) active(ctx context.Context, chatID int64) {
 }
 
 func (a *application) liveList(ctx context.Context, chatID int64, label string, selectView func(rtapi.Torrents) rtapi.Torrents) {
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, label+": "+err.Error())
 		return
@@ -117,7 +117,7 @@ func (a *application) liveList(ctx context.Context, chatID int64, label string, 
 			if !a.wait(liveCtx) {
 				return
 			}
-			updated, err := a.torrents(chatID)
+			updated, err := a.torrents(liveCtx, chatID)
 			if err != nil {
 				a.logger.Printf("%s: %s", label, err)
 				continue
@@ -134,7 +134,7 @@ func (a *application) liveList(ctx context.Context, chatID int64, label string, 
 }
 
 func (a *application) latest(ctx context.Context, chatID int64, arguments []string) {
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "latest: "+err.Error())
 		return
@@ -160,7 +160,7 @@ func (a *application) search(ctx context.Context, chatID int64, arguments []stri
 		return
 	}
 	query := strings.ToLower(strings.Join(arguments, " "))
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "search: "+err.Error())
 		return
@@ -177,7 +177,7 @@ func (a *application) search(ctx context.Context, chatID int64, arguments []stri
 }
 
 func (a *application) sendStatus(ctx context.Context, chatID int64, label, empty string, keep func(*rtapi.Torrent) bool) {
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, label+": "+err.Error())
 		return
@@ -204,7 +204,7 @@ func (a *application) hashing(ctx context.Context, chatID int64) {
 }
 
 func (a *application) errors(ctx context.Context, chatID int64) {
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "errors: "+err.Error())
 		return
@@ -223,7 +223,7 @@ func (a *application) errors(ctx context.Context, chatID int64) {
 }
 
 func (a *application) paused(ctx context.Context, chatID int64) {
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "paused: "+err.Error())
 		return
@@ -238,7 +238,7 @@ func (a *application) paused(ctx context.Context, chatID int64) {
 }
 
 func (a *application) info(ctx context.Context, chatID int64, references []string) {
-	torrents, err := a.selected(chatID, references, false)
+	torrents, err := a.selected(ctx, chatID, references, false)
 	if err != nil {
 		a.send(ctx, chatID, "info: "+err.Error())
 		return
@@ -255,7 +255,7 @@ func (a *application) info(ctx context.Context, chatID int64, references []strin
 				if !a.wait(liveCtx) {
 					return
 				}
-				updated, err := a.rtorrent.GetTorrent(hash)
+				updated, err := a.rtorrent.GetTorrentContext(liveCtx, hash)
 				if err != nil {
 					a.logger.Printf("info: %s", err)
 					return
@@ -270,7 +270,7 @@ func (a *application) info(ctx context.Context, chatID int64, references []strin
 }
 
 func (a *application) trackers(ctx context.Context, chatID int64) {
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "trackers: "+err.Error())
 		return
@@ -296,12 +296,12 @@ func (a *application) trackers(ctx context.Context, chatID int64) {
 }
 
 func (a *application) stats(ctx context.Context, chatID int64) {
-	statistics, err := a.rtorrent.Stats()
+	statistics, err := a.rtorrent.StatsContext(ctx)
 	if err != nil {
 		a.send(ctx, chatID, "stats: "+err.Error())
 		return
 	}
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "stats: "+err.Error())
 		return
@@ -329,7 +329,7 @@ func (a *application) stats(ctx context.Context, chatID int64) {
 }
 
 func (a *application) count(ctx context.Context, chatID int64) {
-	torrents, err := a.torrents(chatID)
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		a.send(ctx, chatID, "count: "+err.Error())
 		return
@@ -343,7 +343,7 @@ func (a *application) count(ctx context.Context, chatID int64) {
 }
 
 func (a *application) speed(ctx context.Context, chatID int64) {
-	down, up, err := a.rtorrent.SpeedsWithError()
+	down, up, err := a.rtorrent.SpeedsContext(ctx)
 	if err != nil {
 		a.send(ctx, chatID, "speed: "+err.Error())
 		return
@@ -358,7 +358,7 @@ func (a *application) speed(ctx context.Context, chatID int64) {
 			if !a.wait(liveCtx) {
 				return
 			}
-			down, up, err := a.rtorrent.SpeedsWithError()
+			down, up, err := a.rtorrent.SpeedsContext(liveCtx)
 			if err != nil {
 				a.edit(liveCtx, chatID, messageID, "speed: "+err.Error())
 				return
