@@ -279,28 +279,38 @@ func (a *application) sort(ctx context.Context, chatID int64, arguments []string
 		a.send(ctx, chatID, "sort: [rev] name|downrate|uprate|size|ratio|age|upload")
 		return
 	}
-	preference := sortPreference{}
-	if strings.EqualFold(arguments[0], "rev") {
-		preference.reverse = true
+	reverse := strings.EqualFold(arguments[0], "rev")
+	if reverse {
 		arguments = arguments[1:]
 	}
 	if len(arguments) != 1 {
 		a.send(ctx, chatID, "sort: [rev] name|downrate|uprate|size|ratio|age|upload")
 		return
 	}
-	preference.key = strings.ToLower(arguments[0])
-	switch preference.key {
-	case "name", "downrate", "uprate", "size", "ratio", "age", "upload":
-	default:
+	key := strings.ToLower(arguments[0])
+	orders, ok := sortings[key]
+	if !ok {
 		a.send(ctx, chatID, "sort: unknown sorting method")
 		return
 	}
-	a.sortMu.Lock()
-	a.sorts[chatID] = preference
-	a.sortMu.Unlock()
-	direction := ""
-	if preference.reverse {
-		direction = "reversed "
+	sorting, direction := orders[0], ""
+	if reverse {
+		sorting, direction = orders[1], "reversed "
 	}
-	a.send(ctx, chatID, "sort: by "+direction+preference.key)
+	a.sortMu.Lock()
+	a.sorts[chatID] = sorting
+	a.sortMu.Unlock()
+	a.send(ctx, chatID, "sort: by "+direction+key)
+}
+
+// sortings maps the sort command's keys to rtapi's ascending and descending
+// orders.
+var sortings = map[string][2]rtapi.Sorting{
+	"name":     {rtapi.ByName, rtapi.ByNameRev},
+	"downrate": {rtapi.ByDownRate, rtapi.ByDownRateRev},
+	"uprate":   {rtapi.ByUpRate, rtapi.ByUpRateRev},
+	"size":     {rtapi.BySize, rtapi.BySizeRev},
+	"ratio":    {rtapi.ByRatio, rtapi.ByRatioRev},
+	"age":      {rtapi.ByAge, rtapi.ByAgeRev},
+	"upload":   {rtapi.ByUpTotal, rtapi.ByUpTotalRev},
 }

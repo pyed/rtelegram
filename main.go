@@ -80,11 +80,6 @@ type config struct {
 	legacyUsernames []string
 }
 
-type sortPreference struct {
-	key     string
-	reverse bool
-}
-
 type messageThreadIDKey struct{}
 
 type httpDoer interface {
@@ -111,7 +106,7 @@ type application struct {
 	addPollInterval time.Duration
 
 	sortMu    sync.RWMutex
-	sorts     map[int64]sortPreference
+	sorts     map[int64]rtapi.Sorting
 	ignoredMu sync.Mutex
 	ignored   map[int64]struct{}
 	wg        sync.WaitGroup
@@ -200,7 +195,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		duration:        defaultLiveUpdates,
 		addTimeout:      defaultAddTimeout,
 		addPollInterval: time.Second,
-		sorts:           make(map[int64]sortPreference),
+		sorts:           make(map[int64]rtapi.Sorting),
 	}
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
 	if cfg.completedLog != "" {

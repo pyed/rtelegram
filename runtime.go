@@ -2,13 +2,11 @@ package main
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -177,38 +175,10 @@ func (a *application) torrents(ctx context.Context, chatID int64) (rtapi.Torrent
 	if err != nil {
 		return nil, err
 	}
-	torrents = slices.Clone(torrents)
 	a.sortMu.RLock()
-	preference, ok := a.sorts[chatID]
+	sorting := a.sorts[chatID]
 	a.sortMu.RUnlock()
-	if !ok {
-		return torrents, nil
-	}
-	compare := func(left, right *rtapi.Torrent) int {
-		switch preference.key {
-		case "name":
-			return strings.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
-		case "downrate":
-			return cmp.Compare(left.DownRate, right.DownRate)
-		case "uprate":
-			return cmp.Compare(left.UpRate, right.UpRate)
-		case "size":
-			return cmp.Compare(left.Size, right.Size)
-		case "ratio":
-			return cmp.Compare(left.Ratio, right.Ratio)
-		case "age":
-			return cmp.Compare(left.Age, right.Age)
-		default:
-			return cmp.Compare(left.UpTotal, right.UpTotal)
-		}
-	}
-	slices.SortStableFunc(torrents, func(left, right *rtapi.Torrent) int {
-		order := compare(left, right)
-		if preference.reverse {
-			return -order
-		}
-		return order
-	})
+	torrents.Sort(sorting)
 	return torrents, nil
 }
 
