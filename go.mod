@@ -4,5 +4,5 @@ go 1.26.0
 
 require (
 	github.com/go-telegram/bot v1.27.0
-	github.com/pyed/rtapi v0.3.1-0.20261001141716-5c705abcbddb
+	github.com/pyed/rtapi v0.4.0
 )
