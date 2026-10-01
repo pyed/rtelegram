@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -179,105 +176,4 @@ func (a *application) torrents(ctx context.Context, chatID int64) (rtapi.Torrent
 	a.state.read(func(data *stateData) { sorting = data.Sorts[chatID] })
 	torrents.Sort(sorting)
 	return torrents, nil
-}
-
-func (a *application) watchCompletedLog(ctx context.Context, path string) {
-	a.watchCompletedLogEvery(ctx, path, 500*time.Millisecond, 5*time.Second)
-}
-
-func (a *application) watchCompletedLogEvery(ctx context.Context, path string, pollInterval, retryInterval time.Duration) {
-	var file *os.File
-	var reader *bufio.Reader
-	var fileInfo os.FileInfo
-	var offset int64
-	var pending string
-	firstOpen := true
-	lastOpenError := ""
-
-	closeFile := func() {
-		if file != nil {
-			_ = file.Close()
-		}
-		file, reader, fileInfo = nil, nil, nil
-		offset, pending = 0, ""
-	}
-	defer closeFile()
-	open := func(atEnd bool) error {
-		closeFile()
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		info, err := f.Stat()
-		if err != nil {
-			f.Close()
-			return err
-		}
-		if atEnd {
-			offset, err = f.Seek(0, io.SeekEnd)
-			if err != nil {
-				f.Close()
-				return err
-			}
-		}
-		file, reader, fileInfo = f, bufio.NewReader(f), info
-		return nil
-	}
-
-	for {
-		if file == nil {
-			if err := open(firstOpen); err != nil {
-				if firstOpen && errors.Is(err, os.ErrNotExist) {
-					firstOpen = false
-				}
-				if message := err.Error(); message != lastOpenError {
-					a.logger.Printf("[ERROR] tailing completed torrents log: %s", err)
-					lastOpenError = message
-				}
-				if !waitFor(ctx, retryInterval) {
-					return
-				}
-				continue
-			}
-			lastOpenError = ""
-			firstOpen = false
-		}
-		fragment, err := reader.ReadString('\n')
-		if fragment != "" {
-			offset += int64(len(fragment))
-			pending += fragment
-			for {
-				newline := strings.IndexByte(pending, '\n')
-				if newline < 0 {
-					break
-				}
-				line := strings.TrimSpace(pending[:newline])
-				pending = pending[newline+1:]
-				if line != "" {
-					if _, sendErr := a.send(ctx, a.notifyChatID, "Completed: "+line); sendErr != nil && ctx.Err() == nil {
-						a.logger.Printf("[ERROR] completion notification: %s", redact(a.token, sendErr.Error()))
-					}
-				}
-			}
-		}
-		if err == nil {
-			continue
-		}
-		if !errors.Is(err, io.EOF) {
-			a.logger.Printf("[ERROR] tailing completed torrents log: %s", err)
-			closeFile()
-			if !waitFor(ctx, retryInterval) {
-				return
-			}
-			continue
-		}
-		current, statErr := os.Stat(path)
-		if statErr != nil || !os.SameFile(fileInfo, current) || current.Size() < offset {
-			closeFile()
-			continue
-		}
-		if !waitFor(ctx, pollInterval) {
-			return
-		}
-	}
 }

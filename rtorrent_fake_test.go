@@ -24,6 +24,9 @@ type fakeRtorrent struct {
 	directory string // directory.default
 	downRate  uint64
 	upRate    uint64
+	limits    [2]uint64               // global down and up rate limits
+	freeSpace uint64                  // d.free_diskspace for every torrent
+	files     map[string][]rtapi.File // by torrent hash
 	load      func(body string) *rtapi.Torrent
 	stall     chan struct{} // when set, requests wait until it is closed
 	requests  []string
@@ -132,6 +135,7 @@ func (f *fakeRtorrent) serve(conn net.Conn) {
 type xmlrpcCallValue struct {
 	String  *string           `xml:"string"`
 	Base64  *string           `xml:"base64"`
+	I8      *string           `xml:"i8"`
 	Array   []xmlrpcCallValue `xml:"array>data>value"`
 	Members []struct {
 		Name  string          `xml:"name"`
@@ -146,6 +150,8 @@ func (v xmlrpcCallValue) text() string {
 		return *v.String
 	case v.Base64 != nil:
 		return *v.Base64
+	case v.I8 != nil:
+		return *v.I8
 	}
 	return v.Text
 }
@@ -247,6 +253,21 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		return xmlrpcInt(6890), false
 	case "directory.default":
 		return xmlrpcString(f.directory), false
+	case "throttle.global_down.max_rate":
+		return xmlrpcInt(int64(f.limits[0])), false
+	case "throttle.global_up.max_rate":
+		return xmlrpcInt(int64(f.limits[1])), false
+	case "throttle.global_down.max_rate.set", "throttle.global_up.max_rate.set":
+		limit, err := strconv.ParseUint(args[1], 10, 64)
+		if err != nil {
+			return xmlrpcFault(-503, "bad limit"), true
+		}
+		if method == "throttle.global_down.max_rate.set" {
+			f.limits[0] = limit
+		} else {
+			f.limits[1] = limit
+		}
+		return xmlrpcInt(0), false
 	}
 	if len(args) == 0 {
 		f.t.Errorf("unexpected rTorrent call %s()", method)
@@ -274,6 +295,26 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		return xmlrpcInt(0), false
 	case "d.erase":
 		f.torrents = append(f.torrents[:index:index], f.torrents[index+1:]...)
+		return xmlrpcInt(0), false
+	case "d.free_diskspace":
+		return xmlrpcInt(int64(f.freeSpace)), false
+	case "d.update_priorities":
+		return xmlrpcInt(0), false
+	case "f.multicall":
+		rows := make([]string, 0, len(f.files[torrent.Hash]))
+		for _, file := range f.files[torrent.Hash] {
+			rows = append(rows, xmlrpcArray(xmlrpcString(file.Path), xmlrpcInt(int64(file.Size)),
+				xmlrpcInt(int64(file.Chunks)), xmlrpcInt(int64(file.CompletedChunks)), xmlrpcInt(int64(file.Priority))))
+		}
+		return xmlrpcArray(rows...), false
+	case "f.priority.set":
+		_, target, _ := strings.Cut(args[0], ":f")
+		fileIndex, err := strconv.Atoi(target)
+		priority, priorityErr := strconv.Atoi(args[1])
+		if err != nil || priorityErr != nil || fileIndex >= len(f.files[torrent.Hash]) {
+			return xmlrpcFault(-501, "Could not find file."), true
+		}
+		f.files[torrent.Hash][fileIndex].Priority = rtapi.FilePriority(priority)
 		return xmlrpcInt(0), false
 	}
 	return f.field(torrent, method), false
@@ -329,6 +370,8 @@ func (f *fakeRtorrent) field(torrent *rtapi.Torrent, name string) string {
 		return xmlrpcString(torrent.Directory)
 	case "d.is_multi_file":
 		return flag(torrent.MultiFile)
+	case "d.timestamp.finished":
+		return xmlrpcInt(int64(torrent.Finished))
 	}
 	f.t.Errorf("unexpected torrent field %s", name)
 	return xmlrpcString("")

@@ -38,6 +38,7 @@ type screen struct {
 	hash    string    // the torrent a card shows
 	confirm string    // "del" or "deldata" while a card asks for confirmation
 	parent  *screen   // the list page a card was opened from
+	notify  bool      // the /notify settings
 }
 
 // screenStore remembers the most recent screens, forgetting the oldest
@@ -208,7 +209,7 @@ func (a *application) renderCard(torrent *rtapi.Torrent, scr *screen) (string, *
 		removals = append(removals, button("💣 Remove + data", "a:deldata"))
 	}
 	last := []models.InlineKeyboardButton{button("🔄 Refresh", "a:refresh")}
-	if scr.parent != nil {
+	if scr.parent != nil && scr.parent.list != nil {
 		last = append(last, button("« Back", "back"))
 	}
 	return formatTorrentInfo(torrent), &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
@@ -218,10 +219,10 @@ func (a *application) renderCard(torrent *rtapi.Torrent, scr *screen) (string, *
 
 // sendScreen sends text with buttons and remembers what it shows. Text too
 // long for one message is sent without buttons.
-func (a *application) sendScreen(ctx context.Context, chatID int64, text string, keyboard *models.InlineKeyboardMarkup, scr *screen) {
+func (a *application) sendScreen(ctx context.Context, chatID int64, text string, keyboard *models.InlineKeyboardMarkup, scr *screen) error {
 	if utf8.RuneCountInString(text) > maxTelegramMessage {
-		a.send(ctx, chatID, text)
-		return
+		_, err := a.send(ctx, chatID, text)
+		return err
 	}
 	messageThreadID, _ := ctx.Value(messageThreadIDKey{}).(int)
 	params := &telegram.SendMessageParams{
@@ -239,10 +240,12 @@ func (a *application) sendScreen(ctx context.Context, chatID int64, text string,
 		return err
 	})
 	if err != nil {
-		a.logger.Printf("[ERROR] Send: %s", redact(a.token, err.Error()))
-		return
+		clean := redact(a.token, err.Error())
+		a.logger.Printf("[ERROR] Send: %s", clean)
+		return errors.New(clean)
 	}
 	a.screens.put(screenKey{chatID, message.ID}, scr)
+	return nil
 }
 
 // editScreen replaces a screen's text and buttons; nil keyboard removes them.
@@ -335,6 +338,11 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 		return a.redrawCard(ctx, key, &next, "")
 	case "a":
 		return a.cardAction(ctx, key, scr, arg)
+	case "nt":
+		if !scr.notify {
+			break
+		}
+		return a.pressNotify(ctx, key, arg)
 	case "y":
 		return a.confirmRemoval(ctx, key, scr, arg)
 	}
@@ -434,7 +442,7 @@ func (a *application) redrawCard(ctx context.Context, key screenKey, scr *screen
 	torrent, err := a.rtorrent.GetTorrentContext(ctx, scr.hash)
 	if err != nil {
 		var keyboard *models.InlineKeyboardMarkup
-		if scr.parent != nil {
+		if scr.parent != nil && scr.parent.list != nil {
 			keyboard = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{button("« Back", "back")}}}
 		}
 		if editErr := a.editScreen(ctx, key, "This torrent is no longer loaded.", keyboard); editErr != nil {

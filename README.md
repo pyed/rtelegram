@@ -78,8 +78,13 @@ Key flags:
 - `-no-live` disables follow-up message edits.
 - `-version` prints the build version without requiring configuration or network
   access.
-- `-completed-torrents-logfile` watches an rTorrent completion log and requires
-  an explicit `-notify-chat-id` destination.
+- `-watch-interval` is how often the bot checks rTorrent for notifications
+  (default 30s), `-stall-after` how long a download may go without progress
+  before it counts as stalled (default 30m, 0 turns it off), and `-low-disk` the
+  free space below which it warns (default 5G, 0 turns it off).
+- `-state` is the file where the bot keeps settings such as sort orders and
+  notification subscriptions. It defaults to `rtelegram/state.json` in the
+  user's config directory.
 - `-data-root` enables `deldata` only beneath that absolute, same-host directory.
 - `-download-root` is the rTorrent directory that upload captions may choose
   download directories under. Without it, they must be inside rTorrent's default
@@ -113,6 +118,7 @@ brackets, such as `<1c60cbe>`.
 | `del HASH...` | | Remove torrents from rTorrent and keep their data |
 | `deldata HASH [confirm]` | | Remove a torrent and its data, after asking (see below) |
 | `stats`, `speed`, `count` | `sa`, `ss`, `co` | Show totals, current speeds, or torrents per state |
+| `notify [on\|off]` | | Choose which notifications this chat gets |
 | `whoami` | | Show your user ID and this chat's ID |
 | `help`, `version` | | |
 
@@ -139,19 +145,24 @@ have changed and tells the operator to refresh before retrying.
 Replies longer than three messages arrive as a text file. When Telegram limits
 how fast the bot may send, the bot waits as long as Telegram asks and retries.
 
-## Completion notifications
+## Notifications
 
-Have rTorrent log each finished torrent's name to a file by adding this to
-`rtorrent.rc`:
+Send `/notify` in any chat, private or group, to choose what the bot tells it
+about. Each is a button to turn on or off:
 
-```
-method.set_key = event.download.finished, log_completed, \
-	"execute.nothrow = sh, -c, \"echo >> /path/to/completed.log \\\"$0\\\"\", $d.name="
-```
+- **Completed downloads**, with a button to open the torrent's card.
+- **New errors**, such as a tracker rejecting a torrent.
+- **Stalled downloads**, when a download makes no progress for `-stall-after`.
+- **Low disk space**, when free space where rTorrent saves data drops below
+  `-low-disk`. The bot warns again only after space recovers.
 
-Then start rtelegram with `-completed-torrents-logfile=/path/to/completed.log`
-and `-notify-chat-id` set to the chat that should receive notifications. Send
-`/whoami` in that chat to see its ID.
+`/notify on` and `/notify off` turn everything on or off at once. In a group
+with topics, notifications go to the topic `/notify` was sent from.
+
+The bot checks rTorrent itself every `-watch-interval`, so nothing needs to be
+added to `rtorrent.rc`. Torrents that finish while the bot is offline are
+announced when it starts again. Subscriptions are kept in the `-state` file. A
+chat that blocks or removes the bot is unsubscribed.
 
 ## Deleting data
 

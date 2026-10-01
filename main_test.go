@@ -20,7 +20,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -318,11 +317,13 @@ type fakeTelegram struct {
 	documents    []sentDocument
 	edits        []sentMessage
 	answers      []callbackAnswer
+	forbidden    map[int64]bool // chats that have blocked the bot
 }
 
 type sentMessage struct {
 	chatID    int64
 	messageID int
+	threadID  int
 	text      string
 	buttons   [][]models.InlineKeyboardButton
 }
@@ -371,13 +372,16 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 				`{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":%d}}`, f.retryAfter)), nil
 		}
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
+		if f.forbidden[chatID] {
+			return response(http.StatusForbidden, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`), nil
+		}
 		threadID, _ := strconv.Atoi(request.FormValue("message_thread_id"))
 		f.chatIDs = append(f.chatIDs, chatID)
 		f.threadIDs = append(f.threadIDs, threadID)
 		f.methods = append(f.methods, method)
 		messageID := len(f.chatIDs)
 		if f.sent != nil {
-			f.sent <- sentMessage{chatID: chatID, messageID: messageID, text: request.FormValue("text"), buttons: keyboard(request)}
+			f.sent <- sentMessage{chatID: chatID, messageID: messageID, threadID: threadID, text: request.FormValue("text"), buttons: keyboard(request)}
 		}
 		result = fmt.Sprintf(`{"message_id":%d,"date":0,"chat":{"id":%d,"type":"private"}}`, messageID, chatID)
 	case "editMessageText":
@@ -1061,16 +1065,6 @@ func TestPlainRendererAndIECFormatter(t *testing.T) {
 	}
 }
 
-type firstWrite struct {
-	once  sync.Once
-	ready chan struct{}
-}
-
-func (w *firstWrite) Write(data []byte) (int, error) {
-	w.once.Do(func() { close(w.ready) })
-	return len(data), nil
-}
-
 func expectSent(t *testing.T, messages <-chan sentMessage, chatID int64, text string) {
 	t.Helper()
 	select {
@@ -1080,73 +1074,5 @@ func expectSent(t *testing.T, messages <-chan sentMessage, chatID int64, text st
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for %q", text)
-	}
-}
-
-func TestCompletedLogHandlesLateCreationFragmentsAndReplacement(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "completed.log")
-	messages := make(chan sentMessage, 8)
-	fake := &fakeTelegram{sent: messages}
-	started := &firstWrite{ready: make(chan struct{})}
-	app := &application{
-		bot:          newTestBot(t, fake, "123:SECRET"),
-		logger:       log.New(started, "", 0),
-		token:        "123:SECRET",
-		notifyChatID: 987,
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		app.watchCompletedLogEvery(ctx, path, 5*time.Millisecond, 5*time.Millisecond)
-	}()
-	defer func() {
-		cancel()
-		<-done
-	}()
-
-	select {
-	case <-started.ready:
-	case <-time.After(time.Second):
-		t.Fatal("watcher did not attempt to open the missing file")
-	}
-	if err := os.WriteFile(path, []byte("created\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	expectSent(t, messages, 987, "Completed: created")
-
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.WriteString("part"); err != nil {
-		file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		t.Fatal(err)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if _, err := file.WriteString("ial\n"); err != nil {
-		file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	expectSent(t, messages, 987, "Completed: partial")
-
-	if err := os.Rename(path, path+".1"); err == nil {
-		if err := os.WriteFile(path, []byte("rotated\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		expectSent(t, messages, 987, "Completed: rotated")
-	} else {
-		t.Logf("open-file replacement unavailable; testing truncation instead: %v", err)
-		if err := os.WriteFile(path, []byte("truncated\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		expectSent(t, messages, 987, "Completed: truncated")
 	}
 }

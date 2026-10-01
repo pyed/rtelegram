@@ -37,7 +37,7 @@ trackers (tr), search (se) QUERY, latest (la) [count]
 add (ad) URL..., info (in) HASH...
 stop (sp), start (st), check (ck) HASH...|all
 del HASH..., deldata HASH [confirm]
-stats (sa), speed (ss), count (co), whoami, help, version
+stats (sa), speed (ss), count (co), notify [on|off], whoami, help, version
 
 Torrent references are the stable hash prefixes shown by list commands.
 In groups, commands must start with /.`
@@ -71,8 +71,11 @@ type config struct {
 	maxResponseMiB  int64
 	addStopped      bool
 	logFile         string
-	completedLog    string
-	notifyChatID    int64
+	completedLog    string // removed in v3
+	notifyChatID    int64  // removed in v3
+	watchInterval   time.Duration
+	stallAfter      time.Duration
+	lowDisk         uint64
 	dataRoot        string
 	downloadRoot    string
 	statePath       string
@@ -88,20 +91,22 @@ type httpDoer interface {
 }
 
 type application struct {
-	bot          *telegram.Bot
-	rtorrent     *rtapi.Rtorrent
-	httpClient   httpDoer
-	logger       *log.Logger
-	token        string
-	botUsername  string
-	masters      principals
-	notifyChatID int64
-	dataRoot     string
-	downloadRoot string
-	addStopped   bool
-	noLive       bool
-	interval     time.Duration
-	duration     int
+	bot           *telegram.Bot
+	rtorrent      *rtapi.Rtorrent
+	httpClient    httpDoer
+	logger        *log.Logger
+	token         string
+	botUsername   string
+	masters       principals
+	watchInterval time.Duration
+	stallAfter    time.Duration
+	lowDisk       uint64 // warn below this many free bytes; 0 disables
+	dataRoot      string
+	downloadRoot  string
+	addStopped    bool
+	noLive        bool
+	interval      time.Duration
+	duration      int
 	// addTimeout bounds how long an add waits for rTorrent to load the torrent.
 	addTimeout      time.Duration
 	addPollInterval time.Duration
@@ -192,7 +197,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		token:           cfg.token,
 		botUsername:     me.Username,
 		masters:         cfg.masters,
-		notifyChatID:    cfg.notifyChatID,
+		watchInterval:   cfg.watchInterval,
+		stallAfter:      cfg.stallAfter,
+		lowDisk:         cfg.lowDisk,
 		dataRoot:        cfg.dataRoot,
 		downloadRoot:    cfg.downloadRoot,
 		addStopped:      cfg.addStopped,
@@ -204,9 +211,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		state:           appState,
 	}
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
-	if cfg.completedLog != "" {
-		app.launch(ctx, func(watchCtx context.Context) { app.watchCompletedLog(watchCtx, cfg.completedLog) })
-	}
+	app.launch(ctx, app.watchEvents)
 	b.Start(ctx)
 	app.wg.Wait()
 	return nil
@@ -223,8 +228,11 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs.Int64Var(&cfg.maxResponseMiB, "max-response-mib", defaultMaxResponseMiB, "Largest rTorrent response to accept, in MiB; raise it for very large libraries")
 	fs.BoolVar(&cfg.addStopped, "add-stopped", false, "Add torrents without starting them")
 	fs.StringVar(&cfg.logFile, "logfile", "", "Send logs to a file")
-	fs.StringVar(&cfg.completedLog, "completed-torrents-logfile", "", "Watch an rTorrent completion log")
-	fs.Int64Var(&cfg.notifyChatID, "notify-chat-id", 0, "Chat ID for completion notifications")
+	fs.StringVar(&cfg.completedLog, "completed-torrents-logfile", "", "Removed in v3; send /notify instead")
+	fs.Int64Var(&cfg.notifyChatID, "notify-chat-id", 0, "Removed in v3; send /notify instead")
+	fs.DurationVar(&cfg.watchInterval, "watch-interval", defaultWatchInterval, "How often to check rTorrent for notifications")
+	fs.DurationVar(&cfg.stallAfter, "stall-after", defaultStallAfter, "Report a download as stalled after this long without progress (0 disables)")
+	lowDisk := fs.String("low-disk", "5G", "Report low disk space below this much free space where rTorrent saves data (0 disables)")
 	fs.StringVar(&cfg.dataRoot, "data-root", "", "Absolute local root allowed for deldata")
 	fs.StringVar(&cfg.downloadRoot, "download-root", "", "Absolute rTorrent directory that upload captions may choose download directories under (default: rTorrent's default directory)")
 	fs.StringVar(&cfg.statePath, "state", "", "File where rtelegram keeps settings such as sort orders (default: rtelegram/state.json in the user's config directory)")
@@ -268,8 +276,17 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	if cfg.maxResponseMiB < 1 || cfg.maxResponseMiB > 1<<16 {
 		return config{}, errors.New("-max-response-mib must be between 1 and 65536")
 	}
-	if cfg.completedLog != "" && cfg.notifyChatID == 0 {
-		return config{}, errors.New("-notify-chat-id is required with -completed-torrents-logfile")
+	if cfg.completedLog != "" || cfg.notifyChatID != 0 {
+		return config{}, errors.New("-completed-torrents-logfile and -notify-chat-id were removed in v3: rtelegram now notices completed torrents itself, so send /notify in the chat that should be told")
+	}
+	if cfg.watchInterval < 5*time.Second {
+		return config{}, errors.New("-watch-interval must be at least 5s")
+	}
+	if cfg.stallAfter < 0 {
+		return config{}, errors.New("-stall-after must not be negative")
+	}
+	if cfg.lowDisk, err = parseSize(*lowDisk); err != nil {
+		return config{}, fmt.Errorf("-low-disk: %w", err)
 	}
 	if cfg.dataRoot != "" {
 		if !filepath.IsAbs(cfg.dataRoot) {
@@ -449,6 +466,8 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.del(ctx, chatID, args)
 	case "deldata":
 		a.deldata(ctx, chatID, args)
+	case "notify":
+		a.notify(ctx, chatID, args)
 	case "whoami":
 		a.whoami(ctx, chatID, message.From)
 	case "help":

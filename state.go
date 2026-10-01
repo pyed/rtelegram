@@ -18,6 +18,18 @@ const stateVersion = 1
 type stateData struct {
 	Version int                     `json:"version"`
 	Sorts   map[int64]rtapi.Sorting `json:"sorts,omitempty"`
+	// Notify holds each chat's event subscriptions.
+	Notify map[int64]notifySettings `json:"notify,omitempty"`
+	// CompletedWatermark is the newest finish time already announced, and
+	// CompletedAt the torrents announced at exactly that second. Zero means
+	// the watcher has not looked yet, so existing torrents are not announced.
+	CompletedWatermark uint64   `json:"completedWatermark,omitempty"`
+	CompletedAt        []string `json:"completedAt,omitempty"`
+}
+
+type notifySettings struct {
+	Events []string `json:"events"`
+	Thread int      `json:"thread,omitempty"` // the forum topic to post in
 }
 
 // state holds stateData and saves it as JSON after every change. A state
