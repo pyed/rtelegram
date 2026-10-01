@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -14,7 +13,6 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,26 +26,9 @@ import (
 
 var version = "dev"
 
-const helpText = `Commands:
-list (li) [tracker] - list torrents
-head (he) [count] - list the first torrents
-tail (ta) [count] - list the last torrents
-down (dl), seeding (sd), paused (pa), checking (ch), active (ac), errors (er)
-sort (so) [rev] name|downrate|uprate|size|ratio|age|upload
-trackers (tr), search (se) QUERY, latest (la) [count]
-add (ad) URL..., info (in) HASH..., files (fi) HASH, get HASH [N]
-stop (sp), start (st), check (ck) HASH...|all
-del HASH..., deldata HASH [confirm]
-stats (sa), speed (ss), count (co), notify [on|off], whoami, help, version
-limit [down N] [up N]|off, quiet HH:MM-HH:MM down N [up N]|off
-find QUERY, watch [add NAME QUERY|del NAME], digest HH:MM|now|off
-
-Tap the buttons under lists, or name torrents by the hash prefixes lists show.
-In groups, commands must start with /.`
-
 const (
 	defaultRtorrentAddress = "localhost:5000"
-	defaultMaxResponseMiB  = 16
+	defaultMaxResponseMiB  = 64
 	defaultLiveInterval    = 3 * time.Second
 	defaultLiveUpdates     = 5
 	defaultAddTimeout      = 15 * time.Second
@@ -62,9 +43,9 @@ const (
 	maxIgnoredUsers = 1000
 )
 
+// principals are the Telegram users the bot answers, by user ID.
 type principals struct {
-	ids       map[int64]struct{}
-	usernames map[string]struct{}
+	ids map[int64]struct{}
 }
 
 type config struct {
@@ -74,8 +55,6 @@ type config struct {
 	maxResponseMiB  int64
 	addStopped      bool
 	logFile         string
-	completedLog    string // removed in v3
-	notifyChatID    int64  // removed in v3
 	watchInterval   time.Duration
 	stallAfter      time.Duration
 	lowDisk         uint64
@@ -87,7 +66,15 @@ type config struct {
 	statePath       string
 	noLive          bool
 	showVersion     bool
-	legacyUsernames []string
+	configPath      string // -config
+	install         bool
+	uninstall       bool
+	// settings are the options given by flag, config file, or environment,
+	// by flag name, which -install saves to the config file.
+	settings map[string]string
+	// rewriteConfig reports whether -install must write the config file:
+	// settings came from somewhere other than an existing config file.
+	rewriteConfig bool
 }
 
 type messageThreadIDKey struct{}
@@ -128,6 +115,9 @@ type application struct {
 }
 
 func main() {
+	if runAsService() {
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr); err != nil {
@@ -148,6 +138,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		_, err := fmt.Fprintln(stdout, version)
 		return err
 	}
+	if cfg.uninstall {
+		return uninstallService(newServiceHost(stdout))
+	}
+	if cfg.install {
+		return installService(ctx, cfg, newServiceHost(stdout))
+	}
 
 	appState, err := loadState(cfg.statePath)
 	if err != nil {
@@ -163,9 +159,6 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		}
 		defer logFile.Close()
 		logger.SetOutput(logFile)
-	}
-	for _, name := range cfg.legacyUsernames {
-		logger.Printf("[WARN] legacy username master @%s is mutable; prefer a numeric Telegram user ID (send /whoami to the bot to see it)", name)
 	}
 
 	httpClient := &http.Client{Timeout: 70 * time.Second}
@@ -221,6 +214,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		state:           appState,
 	}
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
+	app.launch(ctx, app.registerCommands)
 	app.launch(ctx, app.watchEvents)
 	app.launch(ctx, app.watchQuiet)
 	app.launch(ctx, app.watchDigest)
@@ -240,13 +234,11 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs := flag.NewFlagSet("rtelegram", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.token, "token", "", "Telegram bot token (or RT_TOKEN)")
-	fs.StringVar(&mastersText, "masters", "", "Comma-separated Telegram user IDs or legacy usernames (or RT_MASTERS)")
+	fs.StringVar(&mastersText, "masters", "", "Comma-separated numeric Telegram user IDs (or RT_MASTERS)")
 	fs.StringVar(&cfg.rtorrentAddress, "url", "", "rTorrent address: an SCGI socket path or host:port, or an http(s):// XML-RPC URL (or RT_URL; default "+defaultRtorrentAddress+")")
 	fs.Int64Var(&cfg.maxResponseMiB, "max-response-mib", defaultMaxResponseMiB, "Largest rTorrent response to accept, in MiB; raise it for very large libraries")
 	fs.BoolVar(&cfg.addStopped, "add-stopped", false, "Add torrents without starting them")
 	fs.StringVar(&cfg.logFile, "logfile", "", "Send logs to a file")
-	fs.StringVar(&cfg.completedLog, "completed-torrents-logfile", "", "Removed in v3; send /notify instead")
-	fs.Int64Var(&cfg.notifyChatID, "notify-chat-id", 0, "Removed in v3; send /notify instead")
 	fs.DurationVar(&cfg.watchInterval, "watch-interval", defaultWatchInterval, "How often to check rTorrent for notifications")
 	fs.DurationVar(&cfg.stallAfter, "stall-after", defaultStallAfter, "Report a download as stalled after this long without progress (0 disables)")
 	lowDisk := fs.String("low-disk", "5G", "Report low disk space below this much free space where rTorrent saves data (0 disables)")
@@ -258,6 +250,9 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs.StringVar(&cfg.statePath, "state", "", "File where rtelegram keeps settings such as sort orders (default: rtelegram/state.json in the user's config directory)")
 	fs.BoolVar(&cfg.noLive, "no-live", false, "Do not edit messages with live updates")
 	fs.BoolVar(&cfg.showVersion, "version", false, "Print the rtelegram version and exit")
+	fs.StringVar(&cfg.configPath, "config", "", "Read settings from this file: a flag name and value per line, such as token = 123:abc")
+	fs.BoolVar(&cfg.install, "install", false, "Save these settings to the config file and start rtelegram with the system")
+	fs.BoolVar(&cfg.uninstall, "uninstall", false, "Stop starting rtelegram with the system")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -267,24 +262,44 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	if cfg.showVersion {
 		return cfg, nil
 	}
-	if cfg.token == "" {
-		cfg.token = getenv("RT_TOKEN")
+	if cfg.install && cfg.uninstall {
+		return config{}, errors.New("-install and -uninstall cannot be used together")
 	}
+	if cfg.uninstall {
+		return cfg, nil
+	}
+	cfg.rewriteConfig = cfg.configPath == ""
+	fs.Visit(func(f *flag.Flag) { cfg.rewriteConfig = cfg.rewriteConfig || !nonSettings[f.Name] })
+	if cfg.configPath != "" {
+		if err := applyConfigFile(fs, cfg.configPath); err != nil {
+			return config{}, err
+		}
+	}
+	cfg.settings = make(map[string]string)
+	fs.Visit(func(f *flag.Flag) {
+		if !nonSettings[f.Name] {
+			cfg.settings[f.Name] = f.Value.String()
+		}
+	})
+	fromEnvironment := func(name, variable string, value *string) {
+		if *value == "" {
+			if *value = getenv(variable); *value != "" {
+				cfg.settings[name] = *value
+				cfg.rewriteConfig = true
+			}
+		}
+	}
+	fromEnvironment("token", "RT_TOKEN", &cfg.token)
 	if strings.TrimSpace(cfg.token) == "" {
 		return config{}, errors.New("telegram token is missing")
 	}
-	if mastersText == "" {
-		mastersText = getenv("RT_MASTERS")
-	}
-	masters, legacy, err := parsePrincipals(mastersText)
+	fromEnvironment("masters", "RT_MASTERS", &mastersText)
+	masters, err := parsePrincipals(mastersText)
 	if err != nil {
 		return config{}, err
 	}
 	cfg.masters = masters
-	cfg.legacyUsernames = legacy
-	if cfg.rtorrentAddress == "" {
-		cfg.rtorrentAddress = getenv("RT_URL")
-	}
+	fromEnvironment("url", "RT_URL", &cfg.rtorrentAddress)
 	if strings.TrimSpace(cfg.rtorrentAddress) == "" {
 		cfg.rtorrentAddress = defaultRtorrentAddress
 	}
@@ -296,9 +311,6 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	if cfg.maxResponseMiB < 1 || cfg.maxResponseMiB > 1<<16 {
 		return config{}, errors.New("-max-response-mib must be between 1 and 65536")
 	}
-	if cfg.completedLog != "" || cfg.notifyChatID != 0 {
-		return config{}, errors.New("-completed-torrents-logfile and -notify-chat-id were removed in v3: rtelegram now notices completed torrents itself, so send /notify in the chat that should be told")
-	}
 	if cfg.watchInterval < 5*time.Second {
 		return config{}, errors.New("-watch-interval must be at least 5s")
 	}
@@ -308,8 +320,8 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	if cfg.lowDisk, err = parseSize(*lowDisk); err != nil {
 		return config{}, fmt.Errorf("-low-disk: %w", err)
 	}
-	cfg.indexerURL = cmp.Or(cfg.indexerURL, getenv("RT_INDEXER_URL"))
-	cfg.indexerKey = cmp.Or(cfg.indexerKey, getenv("RT_INDEXER_KEY"))
+	fromEnvironment("indexer-url", "RT_INDEXER_URL", &cfg.indexerURL)
+	fromEnvironment("indexer-key", "RT_INDEXER_KEY", &cfg.indexerKey)
 	if cfg.indexerURL != "" {
 		if parsed, err := url.Parse(cfg.indexerURL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return config{}, errors.New("-indexer-url must be an http:// or https:// URL")
@@ -335,47 +347,36 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	return cfg, nil
 }
 
-func parsePrincipals(text string) (principals, []string, error) {
-	p := principals{ids: make(map[int64]struct{}), usernames: make(map[string]struct{})}
+// parsePrincipals reads the comma-separated user IDs of the masters.
+// Usernames are refused: they can be changed and then taken by someone else.
+func parsePrincipals(text string) (principals, error) {
+	p := principals{ids: make(map[int64]struct{})}
 	if strings.TrimSpace(text) == "" {
-		return p, nil, errors.New("at least one Telegram master is required")
+		return p, errors.New("at least one Telegram master is required")
 	}
-	var legacy []string
 	for _, raw := range strings.Split(text, ",") {
 		value := strings.TrimSpace(raw)
-		if value == "" || value == "@" {
-			return principals{}, nil, errors.New("telegram masters must not contain empty entries")
+		if value == "" {
+			return principals{}, errors.New("telegram masters must not contain empty entries")
 		}
-		if id, err := strconv.ParseInt(value, 10, 64); err == nil {
-			if id <= 0 {
-				return principals{}, nil, fmt.Errorf("invalid Telegram user ID %q", value)
-			}
-			p.ids[id] = struct{}{}
-			continue
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return principals{}, fmt.Errorf("telegram masters must be numeric user IDs, and %q is not; usernames are refused because they can change hands. "+
+				"To find your ID, start rtelegram with RT_MASTERS=1 and message the bot: its log shows the ID of each user it ignores", value)
 		}
-		name := strings.ToLower(strings.TrimPrefix(value, "@"))
-		if name == "" || strings.ContainsAny(name, "@ ") {
-			return principals{}, nil, fmt.Errorf("invalid legacy Telegram username %q", value)
+		if id <= 0 {
+			return principals{}, fmt.Errorf("invalid Telegram user ID %q", value)
 		}
-		p.usernames[name] = struct{}{}
-		legacy = append(legacy, name)
+		p.ids[id] = struct{}{}
 	}
-	slices.Sort(legacy)
-	legacy = slices.Compact(legacy)
-	return p, legacy, nil
+	return p, nil
 }
 
 func (p principals) authorized(user *models.User) bool {
 	if user == nil {
 		return false
 	}
-	if _, ok := p.ids[user.ID]; ok {
-		return true
-	}
-	if user.Username == "" {
-		return false
-	}
-	_, ok := p.usernames[strings.ToLower(user.Username)]
+	_, ok := p.ids[user.ID]
 	return ok
 }
 
@@ -462,7 +463,7 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.seeding(ctx, chatID)
 	case "paused", "pa":
 		a.paused(ctx, chatID)
-	case "hashing", "ha", "checking", "ch":
+	case "checking", "ch", "hashing", "ha":
 		a.hashing(ctx, chatID)
 	case "active", "ac":
 		a.active(ctx, chatID)
@@ -551,7 +552,7 @@ func (a *application) whoami(ctx context.Context, chatID int64, user *models.Use
 	if user.Username != "" {
 		username = " (@" + user.Username + ")"
 	}
-	a.send(ctx, chatID, fmt.Sprintf("User ID: %d%s\nChat ID: %d\n\nUse the user ID in RT_MASTERS, and the chat ID with -notify-chat-id.",
+	a.send(ctx, chatID, fmt.Sprintf("User ID: %d%s\nChat ID: %d\n\nMasters are set by user ID, in RT_MASTERS. Send /notify in a chat to choose its notifications.",
 		user.ID, username, chatID))
 }
 

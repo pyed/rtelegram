@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha1"
 	"encoding/base32"
@@ -30,27 +31,28 @@ import (
 )
 
 func TestParsePrincipalsAndAuthorization(t *testing.T) {
-	masters, legacy, err := parsePrincipals("123, @Alice,456")
+	masters, err := parsePrincipals("123, 456")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(legacy, []string{"alice"}) {
-		t.Fatalf("legacy usernames = %v", legacy)
-	}
-	for _, user := range []*models.User{{ID: 123}, {Username: "ALICE"}} {
+	for _, user := range []*models.User{{ID: 123}, {ID: 456, Username: "bob"}} {
 		if !masters.authorized(user) {
 			t.Fatalf("expected %+v to be authorized", user)
 		}
 	}
-	for _, user := range []*models.User{nil, {}, {ID: 999}, {Username: "mallory"}} {
+	for _, user := range []*models.User{nil, {}, {ID: 999}, {ID: 999, Username: "123"}} {
 		if masters.authorized(user) {
 			t.Fatalf("expected %+v to be rejected", user)
 		}
 	}
-	for _, input := range []string{"", "alice,", "@", ",,", "alice,  ,bob", "0"} {
-		if _, _, err := parsePrincipals(input); err == nil {
+	for _, input := range []string{"", "123,", ",,", "123,  ,456", "0", "-5"} {
+		if _, err := parsePrincipals(input); err == nil {
 			t.Fatalf("parsePrincipals(%q) unexpectedly succeeded", input)
 		}
+	}
+	// Usernames can change hands, so they are refused with a way to find the ID.
+	if _, err := parsePrincipals("123,@alice"); err == nil || !strings.Contains(err.Error(), `"@alice"`) || !strings.Contains(err.Error(), "RT_MASTERS=1") {
+		t.Fatalf("parsePrincipals with a username = %v", err)
 	}
 }
 
@@ -66,10 +68,10 @@ func TestParseConfigAddressAndLimits(t *testing.T) {
 		limit   int64
 		stopped bool
 	}{
-		{"", nil, "localhost:5000", 16, false},
-		{"https://user:pass@seedbox.example/RPC2", nil, "https://user:pass@seedbox.example/RPC2", 16, false},
-		{"https://seedbox.example/RPC2", []string{"-url", "/run/rtorrent.sock"}, "/run/rtorrent.sock", 16, false},
-		{"", []string{"-max-response-mib", "64", "-add-stopped"}, "localhost:5000", 64, true},
+		{"", nil, "localhost:5000", 64, false},
+		{"https://user:pass@seedbox.example/RPC2", nil, "https://user:pass@seedbox.example/RPC2", 64, false},
+		{"https://seedbox.example/RPC2", []string{"-url", "/run/rtorrent.sock"}, "/run/rtorrent.sock", 64, false},
+		{"", []string{"-max-response-mib", "16", "-add-stopped"}, "localhost:5000", 16, true},
 	}
 	for _, test := range tests {
 		cfg, err := parse(test.rtURL, test.args...)
@@ -318,6 +320,7 @@ type fakeTelegram struct {
 	edits        []sentMessage
 	answers      []callbackAnswer
 	forbidden    map[int64]bool // chats that have blocked the bot
+	commands     string         // the command menu, as JSON
 }
 
 type sentMessage struct {
@@ -357,7 +360,7 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 	if request.Method == http.MethodGet {
 		return response(http.StatusOK, string(f.file)), nil
 	}
-	if err := request.ParseMultipartForm(1 << 20); err != nil {
+	if err := request.ParseMultipartForm(1 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
 		return nil, err
 	}
 	var result string
@@ -407,6 +410,13 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 		}
 		f.documents = append(f.documents, sentDocument{chatID: chatID, filename: header.Filename, content: string(content)})
 		result = fmt.Sprintf(`{"message_id":1,"date":0,"chat":{"id":%d,"type":"private"}}`, chatID)
+	case "getMyCommands":
+		f.methods = append(f.methods, method)
+		result = cmp.Or(f.commands, "[]")
+	case "setMyCommands":
+		f.methods = append(f.methods, method)
+		f.commands = request.FormValue("commands")
+		result = "true"
 	case "getFile":
 		f.getFileCalls++
 		result = `{"file_id":"file","file_unique_id":"unique","file_size":4,"file_path":"files/a.torrent"}`
@@ -462,7 +472,7 @@ func TestWhoamiReportsUserAndChatIDs(t *testing.T) {
 	fake := &fakeTelegram{sent: make(chan sentMessage, 1)}
 	app := &application{
 		bot: newTestBot(t, fake, "123:SECRET"), logger: log.New(io.Discard, "", 0), token: "123:SECRET",
-		masters: principals{usernames: map[string]struct{}{"alice": {}}}, botUsername: "ThisBot",
+		masters: principals{ids: map[int64]struct{}{4242: {}}}, botUsername: "ThisBot",
 	}
 	app.handle(context.Background(), &models.Update{Message: &models.Message{
 		From: &models.User{ID: 4242, Username: "Alice"}, Chat: models.Chat{ID: -100, Type: models.ChatTypeSupergroup},

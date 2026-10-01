@@ -14,6 +14,9 @@ Download a binary from the
 go install github.com/pyed/rtelegram/v3@latest
 ```
 
+Then [set it up](#set-up), and let it
+[start with the system](#start-with-the-system).
+
 ## Set up
 
 1. **Give rTorrent an SCGI endpoint.** rTorrent must be built with XML-RPC
@@ -35,17 +38,16 @@ go install github.com/pyed/rtelegram/v3@latest
 2. **Create a bot.** Message [@BotFather](https://t.me/BotFather), send
    `/newbot`, and follow the prompts. It replies with the bot's token.
 
-3. **Find your numeric Telegram user ID.** Start the bot with your `@username`
-   as a temporary master, then send it `/whoami`:
+3. **Find your numeric Telegram user ID.** Start the bot with a placeholder
+   ID, and message it privately:
 
    ```sh
-   RT_TOKEN=123456:secret RT_MASTERS=@yourname rtelegram -url /home/user/rtorrent/rpc.socket
+   RT_TOKEN=123456:secret RT_MASTERS=1 rtelegram -url /home/user/rtorrent/rpc.socket
    ```
 
-   If you have no username, start it with any placeholder ID instead, such as
-   `RT_MASTERS=1`, and message the bot privately. The log shows
+   The bot ignores you, and its log shows
    `Ignored a private message from unauthorized Telegram user ID ...` with your
-   ID.
+   ID. Stop it with Ctrl+C.
 
 4. **Run it with your ID.**
 
@@ -53,14 +55,42 @@ go install github.com/pyed/rtelegram/v3@latest
    RT_TOKEN=123456:secret RT_MASTERS=123456789 rtelegram -url /home/user/rtorrent/rpc.socket
    ```
 
-   Send `/help` to the bot for the command list.
+   Type `/` in the chat for the command menu, or send `/help`.
+
+5. **Start it with the system.** Stop it, and run the same command with
+   `-install` (see [below](#start-with-the-system)).
+
+## Start with the system
+
+Add `-install` to the command that runs the bot:
+
+```sh
+RT_TOKEN=123456:secret RT_MASTERS=123456789 rtelegram -url /home/user/rtorrent/rpc.socket -install
+```
+
+rtelegram checks that it can reach Telegram and rTorrent, saves the settings
+(the flags and `RT_*` variables it was given) to a config file only you can
+read, and registers a service that runs `rtelegram -config FILE` and restarts
+it if it stops. It prints where the settings and logs are, and how to restart
+the service after editing the settings.
+
+| System | Run as yourself | Run with `sudo` |
+|---|---|---|
+| Linux (systemd) | A user service that starts at boot, or at login if your account may not linger | A system service that starts at boot, as the user who ran `sudo` |
+| macOS | A launch agent that starts when you log in | A launch daemon that starts at boot, as the user who ran `sudo` |
+| Windows | | From an administrator prompt: a service that starts with Windows and logs to `rtelegram.log` beside the settings |
+
+Install it as the user rTorrent runs as, so that it can reach rTorrent's
+socket. Running `-install` again replaces the service with the new settings.
+`rtelegram -uninstall` (with `sudo` if it was installed with `sudo`) stops the
+service and removes it; the settings and state files are kept. On other
+systems, have the init system run `rtelegram -config FILE`.
 
 ## Configure
 
-`RT_MASTERS` is a comma-separated list of the Telegram users the bot answers.
-Stable numeric user IDs are preferred. Usernames are still accepted, but the bot
-warns because they can be changed or reassigned. Empty or malformed entries are
-rejected.
+`RT_MASTERS` is a comma-separated list of the numeric user IDs of the Telegram
+users the bot answers. Usernames are refused, since they can be changed and
+then claimed by someone else; [Set up](#set-up) shows how to find an ID.
 
 Flags, with the environment variables that can replace them:
 
@@ -70,8 +100,8 @@ Flags, with the environment variables that can replace them:
   address: an SCGI socket path, an SCGI `host:port` (default `localhost:5000`),
   or an `http://` or `https://` XML-RPC URL whose credentials are sent with
   HTTP basic authentication and hidden in logs. `-max-response-mib` is the
-  largest rTorrent response the bot accepts (default 16); raise it if listing a
-  very large library fails.
+  largest rTorrent response the bot accepts (default 64, enough for tens of
+  thousands of torrents).
 - **Adding torrents.** `-add-stopped` adds torrents without starting them.
   `-download-root` is the rTorrent directory that upload captions may choose
   download directories under; without it, they must be inside rTorrent's
@@ -92,6 +122,19 @@ Flags, with the environment variables that can replace them:
   private file, `-no-live` stops follow-up edits of `head`, `tail`, `active`,
   and `speed` replies, and `-version` prints the version without needing any
   other configuration.
+
+Settings can also come from a file given with `-config FILE`, one per line and
+named like the flags, as `-install` writes them:
+
+```
+token = 123456:secret
+masters = 123456789
+url = /home/user/rtorrent/rpc.socket
+data-root = /srv/torrents
+```
+
+Flags on the command line override the file, and the file overrides the
+environment.
 
 ## Commands
 
@@ -132,6 +175,50 @@ brackets, such as `<1c60cbe>`.
 | `watch [add NAME QUERY\|del NAME]` | | Add new releases for a search automatically |
 | `whoami` | | Show your user ID and this chat's ID |
 | `help`, `version` | | |
+
+### Command menu
+
+When the bot has no command menu, rtelegram registers its commands with
+Telegram as it starts, so typing `/` in a chat lists them. A menu set in
+BotFather is kept. To set it yourself, send `/setcommands` to
+[@BotFather](https://t.me/BotFather), choose the bot, and paste:
+
+```text
+list - List torrents; list TRACKER lists one tracker's
+active - Show torrents transferring now, updating live
+down - List downloading torrents
+seeding - List seeding torrents
+paused - List stopped torrents
+checking - List torrents being verified
+errors - List torrents with errors, and why
+latest - List the newest torrents: latest [N]
+head - Show the first torrents, updating live: head [N]
+tail - Show the last torrents, updating live: tail [N]
+search - Find torrents by name: search WORDS
+info - Show torrents' cards with buttons: info HASH...
+add - Add torrents from links or magnets: add LINK...
+find - Search the indexer and add a result: find WORDS
+watch - Add new releases automatically: watch add NAME WORDS, watch del NAME
+files - Skip or prioritize a torrent's files: files HASH
+get - Send a finished file: get HASH [N]
+start - Start torrents: start HASH... or start all
+stop - Stop torrents: stop HASH... or stop all
+check - Verify torrents' data: check HASH... or check all
+del - Remove torrents and keep their data: del HASH...
+deldata - Remove a torrent and delete its data: deldata HASH
+speed - Show current speeds, updating live
+limit - Show or set speed limits: limit down 5M up 1M, or limit off
+quiet - Lower speed limits at night: quiet 01:00-07:00 down 1M up 500K, or quiet off
+stats - Show transfer totals and rTorrent settings
+count - Count torrents in each state
+trackers - Count torrents per tracker
+sort - Sort lists: sort [rev] name|downrate|uprate|size|ratio|age|upload
+notify - Choose this chat's notifications: notify [on|off]
+digest - Get a daily summary: digest 08:00, digest now, or digest off
+whoami - Show your Telegram user ID and this chat's ID
+version - Show the rtelegram and rTorrent versions
+help - List the commands
+```
 
 To add a `.torrent` file, send it to the bot. In a private chat the caption can
 set the download directory and label, as `d=/path` and `l=label`. A single other
@@ -244,10 +331,11 @@ reports that partial outcome explicitly.
 ## Upgrading to v3
 
 - Install from `github.com/pyed/rtelegram/v3`.
-- `-completed-torrents-logfile` and `-notify-chat-id` are gone, and the bot
-  stops with a message if they are given. Send `/notify` in the chat that
-  should hear about completed downloads; the `rtorrent.rc` line that logged
-  completions is no longer needed.
+- `-completed-torrents-logfile` and `-notify-chat-id` are gone. Send
+  `/notify` in the chat that should hear about completed downloads; the
+  `rtorrent.rc` line that logged completions is no longer needed.
+- From 3.0.1, `RT_MASTERS` takes only numeric user IDs; usernames are refused.
+  [Set up](#set-up) shows how to find yours.
 - Settings are kept in the `-state` file. Make sure its directory is writable,
   or set `-state` (for example, for a service with no home directory).
 - `info` sends a card with buttons instead of editing itself for a while, and
@@ -258,7 +346,7 @@ reports that partial outcome explicitly.
 From v1, also:
 
 - Torrents are referenced by hash prefix, not by their position in a list.
-- Prefer numeric user IDs in `RT_MASTERS`. `/whoami` shows yours.
+- `RT_MASTERS` takes numeric user IDs, not usernames.
 - `deldata` requires `-data-root`.
 - In groups, commands must start with `/`, and torrent files need an `/add`
   caption.
@@ -270,8 +358,10 @@ untrusted network. Use a permission-protected local socket where possible and
 follow rTorrent's
 [official XML-RPC security guidance](https://github.com/rakshasa/rtorrent-doc/blob/master/RPC-Setup-XMLRPC.md).
 Treat the Telegram token, the authorized user list, the indexer key, the
-`-state` file (which the bot writes with private permissions), and
-`-data-root` as security-sensitive configuration. Anyone in `RT_MASTERS` can
+`-config` and `-state` files (which the bot writes with private permissions),
+and `-data-root` as security-sensitive configuration. Prefer environment
+variables or a config file to flags for secrets, since other users of the
+machine can see a program's flags. Anyone in `RT_MASTERS` can
 add torrents and, with `-data-root`, delete data and read files beneath it.
 
 ## Development and release order

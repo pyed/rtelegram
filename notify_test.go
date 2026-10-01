@@ -291,16 +291,9 @@ func TestNotificationCardHasNoBack(t *testing.T) {
 	}
 }
 
-func TestRemovedNotificationFlagsExplainTheReplacement(t *testing.T) {
+func TestNotificationFlags(t *testing.T) {
 	env := map[string]string{"RT_TOKEN": "123:SECRET", "RT_MASTERS": "7"}
 	getenv := func(name string) string { return env[name] }
-	for _, args := range [][]string{
-		{"-completed-torrents-logfile", "/var/log/completed.log"}, {"-notify-chat-id", "123"},
-	} {
-		if _, err := parseConfig(args, getenv, io.Discard); err == nil || !strings.Contains(err.Error(), "/notify") {
-			t.Errorf("parseConfig(%v) = %v, want an error pointing at /notify", args, err)
-		}
-	}
 	for _, args := range [][]string{{"-watch-interval", "1s"}, {"-low-disk", "lots"}, {"-stall-after", "-1m"}} {
 		if _, err := parseConfig(args, getenv, io.Discard); err == nil {
 			t.Errorf("parseConfig(%v) succeeded", args)
