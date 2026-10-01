@@ -62,45 +62,45 @@ Stable numeric user IDs are preferred. Usernames are still accepted, but the bot
 warns because they can be changed or reassigned. Empty or malformed entries are
 rejected.
 
-Key flags:
+Flags, with the environment variables that can replace them:
 
-- `-token`, `-masters`, and `-url` override `RT_TOKEN`, `RT_MASTERS`, and
-  `RT_URL`. Prefer the environment variables for secrets, since command-line
-  flags are visible to other users of the machine.
-- `-url` is rTorrent's address: an SCGI socket path, an SCGI `host:port`
-  (default `localhost:5000`), or an `http://` or `https://` XML-RPC URL.
-  Credentials in a URL are sent with HTTP basic authentication and hidden in
-  logs.
-- `-add-stopped` adds torrents without starting them.
-- `-indexer-url` and `-indexer-key` (or `RT_INDEXER_URL` and `RT_INDEXER_KEY`)
-  point `find` and `watch` at a Torznab endpoint, and `-feed-interval` is how
-  often watch rules search (default 15m).
-- `-max-response-mib` is the largest rTorrent response the bot accepts
-  (default 16). Raise it if listing a very large library fails.
-- `-logfile` writes operational logs to a private file.
-- `-no-live` disables follow-up message edits.
-- `-version` prints the build version without requiring configuration or network
-  access.
-- `-watch-interval` is how often the bot checks rTorrent for notifications
+- **Connection.** `-token` (`RT_TOKEN`), `-masters` (`RT_MASTERS`), and `-url`
+  (`RT_URL`). Prefer the environment variables for secrets, since command-line
+  flags are visible to other users of the machine. `-url` is rTorrent's
+  address: an SCGI socket path, an SCGI `host:port` (default `localhost:5000`),
+  or an `http://` or `https://` XML-RPC URL whose credentials are sent with
+  HTTP basic authentication and hidden in logs. `-max-response-mib` is the
+  largest rTorrent response the bot accepts (default 16); raise it if listing a
+  very large library fails.
+- **Adding torrents.** `-add-stopped` adds torrents without starting them.
+  `-download-root` is the rTorrent directory that upload captions may choose
+  download directories under; without it, they must be inside rTorrent's
+  default directory.
+- **Files on disk.** `-data-root` enables `deldata` and `get` beneath that
+  absolute directory, on the machine rtelegram runs on.
+- **Notifications.** `-watch-interval` is how often the bot checks rTorrent
   (default 30s), `-stall-after` how long a download may go without progress
-  before it counts as stalled (default 30m, 0 turns it off), and `-low-disk` the
-  free space below which it warns (default 5G, 0 turns it off).
-- `-state` is the file where the bot keeps settings such as sort orders and
-  notification subscriptions. It defaults to `rtelegram/state.json` in the
-  user's config directory.
-- `-data-root` enables `deldata` and `get` only beneath that absolute directory,
-  on the machine rtelegram runs on.
-- `-download-root` is the rTorrent directory that upload captions may choose
-  download directories under. Without it, they must be inside rTorrent's default
-  directory.
+  before it counts as stalled (default 30m; 0 turns it off), and `-low-disk`
+  the free space below which it warns (default 5G; 0 turns it off).
+- **Find and watch.** `-indexer-url` (`RT_INDEXER_URL`) and `-indexer-key`
+  (`RT_INDEXER_KEY`) point them at a Torznab endpoint, and `-feed-interval` is
+  how often watch rules search (default 15m).
+- **The bot itself.** `-state` is the file where the bot keeps settings such as
+  sort orders, subscriptions, quiet hours, watch rules, and digests; it
+  defaults to `rtelegram/state.json` in the user's config directory, so a
+  service without a home directory needs it set. `-logfile` writes logs to a
+  private file, `-no-live` stops follow-up edits of `head`, `tail`, `active`,
+  and `speed` replies, and `-version` prints the version without needing any
+  other configuration.
 
 ## Commands
 
 Lists come with a button for each torrent, ten to a page with ◀ ▶ to move
 between pages. Tapping a torrent opens its card, with buttons to start or stop
-it, verify it, remove it, list its files, refresh, and go back to the list. Removing asks for
-confirmation first. Only the users in `RT_MASTERS` can use the buttons, even in
-groups, and the bot remembers the buttons of its last 500 messages.
+it, verify it, remove it, list its files, refresh, and go back to the list.
+Removing asks for confirmation first. Only the users in `RT_MASTERS` can use
+the buttons, even in groups, and the bot remembers the buttons of its last 500
+messages.
 
 Commands can also name torrents by the hash prefix that lists show in angle
 brackets, such as `<1c60cbe>`.
@@ -138,9 +138,9 @@ set the download directory and label, as `d=/path` and `l=label`. A single other
 word sets the label, or the directory if it contains a slash; longer notes are
 ignored. The directory must be inside the download root (see `-download-root`),
 and a relative one is placed under it. In a group, the file needs `/add` as its
-caption. Files are limited to 16 MiB. The bot
-downloads the file inside the Telegram trust boundary and passes raw bytes to
-rTorrent, so the bot token is never embedded in an SCGI request.
+caption. Files are limited to 16 MiB. The bot downloads the file inside the
+Telegram trust boundary and passes raw bytes to rTorrent, so the bot token is
+never embedded in an SCGI request.
 
 The bot replies `Added:` only once the torrent appears in rTorrent, and says so
 when it is already loaded. rTorrent fetches links in the background; if nothing
@@ -232,23 +232,34 @@ as soon as it is back, at most once a day, and in a group it goes to the topic
 ## Deleting data
 
 `deldata HASH` asks for confirmation with buttons, and `deldata HASH confirm`
-deletes straight away. Either is intentionally stricter than ordinary deletion. It is
-disabled without `-data-root`, rejects roots, parents, symlink targets, and paths
-that overlap another loaded torrent, and refuses whenever rTorrent has not
-reported where another torrent keeps its data. rTorrent reports `d.base_path`
+deletes straight away. Either is intentionally stricter than ordinary deletion.
+It is disabled without `-data-root`, rejects roots, parents, symlink targets,
+and paths that overlap another loaded torrent, and refuses whenever rTorrent
+has not reported where another torrent keeps its data. rTorrent reports `d.base_path`
 only for torrents it has opened, so unopened torrents are located through
 `d.directory`. It then requires an acknowledged metadata deletion and removes
 the contained local path. If local removal fails after metadata erasure, the bot
 reports that partial outcome explicitly.
 
-## Upgrading from v1
+## Upgrading to v3
 
 - Install from `github.com/pyed/rtelegram/v3`.
+- `-completed-torrents-logfile` and `-notify-chat-id` are gone, and the bot
+  stops with a message if they are given. Send `/notify` in the chat that
+  should hear about completed downloads; the `rtorrent.rc` line that logged
+  completions is no longer needed.
+- Settings are kept in the `-state` file. Make sure its directory is writable,
+  or set `-state` (for example, for a service with no home directory).
+- `info` sends a card with buttons instead of editing itself for a while, and
+  lists of more than ten torrents come in pages.
+- `deldata HASH` now asks for confirmation; `deldata HASH confirm` still
+  deletes straight away.
+
+From v1, also:
+
 - Torrents are referenced by hash prefix, not by their position in a list.
 - Prefer numeric user IDs in `RT_MASTERS`. `/whoami` shows yours.
-- `-completed-torrents-logfile` now requires `-notify-chat-id`. v1 sent
-  notifications to whichever chat used the bot last.
-- `deldata` requires `-data-root` and the form `deldata HASH confirm`.
+- `deldata` requires `-data-root`.
 - In groups, commands must start with `/`, and torrent files need an `/add`
   caption.
 
@@ -258,8 +269,10 @@ rTorrent's RPC interface has no authentication and should never be exposed to an
 untrusted network. Use a permission-protected local socket where possible and
 follow rTorrent's
 [official XML-RPC security guidance](https://github.com/rakshasa/rtorrent-doc/blob/master/RPC-Setup-XMLRPC.md).
-Treat the Telegram token, authorized user list, notification chat ID, and
-`-data-root` as security-sensitive configuration.
+Treat the Telegram token, the authorized user list, the indexer key, the
+`-state` file (which the bot writes with private permissions), and
+`-data-root` as security-sensitive configuration. Anyone in `RT_MASTERS` can
+add torrents and, with `-data-root`, delete data and read files beneath it.
 
 ## Development and release order
 

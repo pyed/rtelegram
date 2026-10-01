@@ -42,7 +42,7 @@ stats (sa), speed (ss), count (co), notify [on|off], whoami, help, version
 limit [down N] [up N]|off, quiet HH:MM-HH:MM down N [up N]|off
 find QUERY, watch [add NAME QUERY|del NAME], digest HH:MM|now|off
 
-Torrent references are the stable hash prefixes shown by list commands.
+Tap the buttons under lists, or name torrents by the hash prefixes lists show.
 In groups, commands must start with /.`
 
 const (
