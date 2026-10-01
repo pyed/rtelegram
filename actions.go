@@ -235,43 +235,58 @@ func (a *application) del(ctx context.Context, chatID int64, references []string
 	a.send(ctx, chatID, "Deleted: "+pluralNames(torrents))
 }
 
+// deldata deletes a torrent and its data. "deldata HASH" asks with buttons,
+// and "deldata HASH confirm" deletes straight away.
 func (a *application) deldata(ctx context.Context, chatID int64, arguments []string) {
-	if len(arguments) != 2 || !strings.EqualFold(arguments[1], "confirm") {
-		a.send(ctx, chatID, "deldata: use deldata HASH confirm")
-		return
+	switch {
+	case len(arguments) == 2 && strings.EqualFold(arguments[1], "confirm"):
+		message, _ := a.deleteWithData(ctx, chatID, arguments[0])
+		a.send(ctx, chatID, message)
+	case len(arguments) == 1:
+		if a.dataRoot == "" {
+			a.send(ctx, chatID, "deldata: deldata is disabled; configure an absolute -data-root")
+			return
+		}
+		torrents, err := a.selected(ctx, chatID, arguments, false)
+		if err != nil {
+			a.send(ctx, chatID, "deldata: "+err.Error())
+			return
+		}
+		a.sendCard(ctx, chatID, torrents[0], "deldata")
+	default:
+		a.send(ctx, chatID, "deldata: use deldata HASH, or deldata HASH confirm")
 	}
+}
+
+// deleteWithData erases a torrent's metadata and then deletes its data. It
+// returns what happened, and whether the metadata was erased.
+func (a *application) deleteWithData(ctx context.Context, chatID int64, reference string) (string, bool) {
 	allTorrents, err := a.torrents(ctx, chatID)
 	if err != nil {
-		a.send(ctx, chatID, "deldata: "+err.Error())
-		return
+		return "deldata: " + err.Error(), false
 	}
-	torrent, err := resolveTorrent(allTorrents, arguments[0])
+	torrent, err := resolveTorrent(allTorrents, reference)
 	if err != nil {
-		a.send(ctx, chatID, "deldata: "+err.Error())
-		return
+		return "deldata: " + err.Error(), false
 	}
 	targetPath := dataPath(torrent)
 	root, relative, err := validateTorrentData(a.dataRoot, targetPath)
 	if err != nil {
-		a.send(ctx, chatID, "deldata: "+err.Error())
-		return
+		return "deldata: " + err.Error(), false
 	}
 	defer root.Close()
 	if err := sharedDataConflict(torrent, targetPath, allTorrents); err != nil {
-		a.send(ctx, chatID, "deldata: "+err.Error())
-		return
+		return "deldata: " + err.Error(), false
 	}
 	if err := a.rtorrent.DeleteMetadataContext(ctx, torrent); err != nil {
 		a.logger.Printf("deldata: %s", err)
-		a.send(ctx, chatID, "deldata: "+err.Error())
-		return
+		return "deldata: " + err.Error(), false
 	}
 	if err := root.RemoveAll(relative); err != nil {
 		a.logger.Printf("deldata local removal: %s", err)
-		a.send(ctx, chatID, fmt.Sprintf("Deleted torrent metadata, but could not remove local data for %s: %s", torrent.Name, err))
-		return
+		return fmt.Sprintf("Deleted torrent metadata, but could not remove local data for %s: %s", torrent.Name, err), true
 	}
-	a.send(ctx, chatID, "Deleted with data: "+torrent.Name)
+	return "Deleted with data: " + torrent.Name, true
 }
 
 func (a *application) sort(ctx context.Context, chatID int64, arguments []string) {

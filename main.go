@@ -36,7 +36,7 @@ sort (so) [rev] name|downrate|uprate|size|ratio|age|upload
 trackers (tr), search (se) QUERY, latest (la) [count]
 add (ad) URL..., info (in) HASH...
 stop (sp), start (st), check (ck) HASH...|all
-del HASH..., deldata HASH confirm
+del HASH..., deldata HASH [confirm]
 stats (sa), speed (ss), count (co), whoami, help, version
 
 Torrent references are the stable hash prefixes shown by list commands.
@@ -107,6 +107,7 @@ type application struct {
 	addPollInterval time.Duration
 
 	state     *state
+	screens   screenStore
 	ignoredMu sync.Mutex
 	ignored   map[int64]struct{}
 	wg        sync.WaitGroup
@@ -158,7 +159,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	b, err := telegram.New(cfg.token,
 		telegram.WithSkipGetMe(),
 		telegram.WithHTTPClient(60*time.Second, httpClient),
-		telegram.WithAllowedUpdates(telegram.AllowedUpdates{models.AllowedUpdateMessage}),
+		telegram.WithAllowedUpdates(telegram.AllowedUpdates{models.AllowedUpdateMessage, models.AllowedUpdateCallbackQuery}),
 		telegram.WithNotAsyncHandlers(),
 		telegram.WithErrorsHandler(func(err error) {
 			logger.Printf("[ERROR] Telegram: %s", redact(cfg.token, err.Error()))
@@ -372,6 +373,10 @@ func documentOptions(message *models.Message, botUsername string) (string, bool)
 }
 
 func (a *application) handle(ctx context.Context, update *models.Update) {
+	if update != nil && update.CallbackQuery != nil {
+		a.handleCallback(ctx, update.CallbackQuery)
+		return
+	}
 	if update == nil || update.Message == nil {
 		return
 	}

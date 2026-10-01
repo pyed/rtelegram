@@ -87,7 +87,13 @@ Key flags:
 
 ## Commands
 
-Torrents are referenced by the hash prefix that list commands show in angle
+Lists come with a button for each torrent, ten to a page with ◀ ▶ to move
+between pages. Tapping a torrent opens its card, with buttons to start or stop
+it, verify it, remove it, refresh, and go back to the list. Removing asks for
+confirmation first. Only the users in `RT_MASTERS` can use the buttons, even in
+groups, and the bot remembers the buttons of its last 500 messages.
+
+Commands can also name torrents by the hash prefix that lists show in angle
 brackets, such as `<1c60cbe>`.
 
 | Command | Alias | What it does |
@@ -102,10 +108,10 @@ brackets, such as `<1c60cbe>`.
 | `search QUERY` | `se` | List torrents whose name contains QUERY |
 | `latest [n]` | `la` | List the n most recently added torrents |
 | `add URL...` | `ad` | Add torrents from URLs or magnet links, and confirm rTorrent loaded them |
-| `info HASH...` | `in` | Show details, with live updates |
+| `info HASH...` | `in` | Show each torrent's card |
 | `start`, `stop`, `check` `HASH...\|all` | `st`, `sp`, `ck` | Start, stop, or verify torrents |
 | `del HASH...` | | Remove torrents from rTorrent and keep their data |
-| `deldata HASH confirm` | | Remove a torrent and its data (see below) |
+| `deldata HASH [confirm]` | | Remove a torrent and its data, after asking (see below) |
 | `stats`, `speed`, `count` | `sa`, `ss`, `co` | Show totals, current speeds, or torrents per state |
 | `whoami` | | Show your user ID and this chat's ID |
 | `help`, `version` | | |
@@ -149,7 +155,8 @@ and `-notify-chat-id` set to the chat that should receive notifications. Send
 
 ## Deleting data
 
-`deldata HASH confirm` is intentionally stricter than ordinary deletion. It is
+`deldata HASH` asks for confirmation with buttons, and `deldata HASH confirm`
+deletes straight away. Either is intentionally stricter than ordinary deletion. It is
 disabled without `-data-root`, rejects roots, parents, symlink targets, and paths
 that overlap another loaded torrent, and refuses whenever rTorrent has not
 reported where another torrent keeps its data. rTorrent reports `d.base_path`

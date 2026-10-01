@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -38,23 +37,7 @@ func filterTorrents(torrents rtapi.Torrents, keep func(*rtapi.Torrent) bool) rta
 }
 
 func (a *application) list(ctx context.Context, chatID int64, arguments []string) {
-	torrents, err := a.torrents(ctx, chatID)
-	if err != nil {
-		a.send(ctx, chatID, "list: "+err.Error())
-		return
-	}
-	prefixes := hashPrefixes(torrents)
-	if len(arguments) > 0 {
-		query := strings.ToLower(strings.Join(arguments, " "))
-		torrents = filterTorrents(torrents, func(torrent *rtapi.Torrent) bool {
-			return strings.Contains(strings.ToLower(trackerHost(torrent.Tracker)), query)
-		})
-	}
-	if len(torrents) == 0 {
-		a.send(ctx, chatID, "list: No torrents")
-		return
-	}
-	a.send(ctx, chatID, renderTorrentListWithPrefixes(torrents, prefixes))
+	a.showList(ctx, chatID, listSpec{kind: "list", query: strings.ToLower(strings.Join(arguments, " "))})
 }
 
 func (a *application) head(ctx context.Context, chatID int64, arguments []string) {
@@ -134,24 +117,12 @@ func (a *application) liveList(ctx context.Context, chatID int64, label string, 
 }
 
 func (a *application) latest(ctx context.Context, chatID int64, arguments []string) {
-	torrents, err := a.torrents(ctx, chatID)
+	n, err := parseCount(arguments, 5, int(^uint(0)>>1))
 	if err != nil {
 		a.send(ctx, chatID, "latest: "+err.Error())
 		return
 	}
-	n, err := parseCount(arguments, 5, len(torrents))
-	if err != nil {
-		a.send(ctx, chatID, "latest: "+err.Error())
-		return
-	}
-	prefixes := hashPrefixes(torrents)
-	torrents = slices.Clone(torrents)
-	slices.SortStableFunc(torrents, func(a, b *rtapi.Torrent) int { return cmp.Compare(b.Age, a.Age) })
-	if n == 0 {
-		a.send(ctx, chatID, "latest: No torrents")
-		return
-	}
-	a.send(ctx, chatID, renderTorrentListWithPrefixes(torrents[:n], prefixes))
+	a.showList(ctx, chatID, listSpec{kind: "latest", count: n})
 }
 
 func (a *application) search(ctx context.Context, chatID int64, arguments []string) {
@@ -159,84 +130,30 @@ func (a *application) search(ctx context.Context, chatID int64, arguments []stri
 		a.send(ctx, chatID, "search: needs an argument")
 		return
 	}
-	query := strings.ToLower(strings.Join(arguments, " "))
-	torrents, err := a.torrents(ctx, chatID)
-	if err != nil {
-		a.send(ctx, chatID, "search: "+err.Error())
-		return
-	}
-	prefixes := hashPrefixes(torrents)
-	torrents = filterTorrents(torrents, func(torrent *rtapi.Torrent) bool {
-		return strings.Contains(strings.ToLower(torrent.Name), query)
-	})
-	if len(torrents) == 0 {
-		a.send(ctx, chatID, "No matches")
-		return
-	}
-	a.send(ctx, chatID, renderTorrentListWithPrefixes(torrents, prefixes))
-}
-
-func (a *application) sendStatus(ctx context.Context, chatID int64, label, empty string, keep func(*rtapi.Torrent) bool) {
-	torrents, err := a.torrents(ctx, chatID)
-	if err != nil {
-		a.send(ctx, chatID, label+": "+err.Error())
-		return
-	}
-	prefixes := hashPrefixes(torrents)
-	torrents = filterTorrents(torrents, keep)
-	if len(torrents) == 0 {
-		a.send(ctx, chatID, empty)
-		return
-	}
-	a.send(ctx, chatID, renderTorrentListWithPrefixes(torrents, prefixes))
+	a.showList(ctx, chatID, listSpec{kind: "search", query: strings.ToLower(strings.Join(arguments, " "))})
 }
 
 func (a *application) downs(ctx context.Context, chatID int64) {
-	a.sendStatus(ctx, chatID, "down", "No downloads", func(t *rtapi.Torrent) bool { return t.State == rtapi.Leeching })
+	a.showList(ctx, chatID, listSpec{kind: "down"})
 }
 
 func (a *application) seeding(ctx context.Context, chatID int64) {
-	a.sendStatus(ctx, chatID, "seeding", "No torrents seeding", func(t *rtapi.Torrent) bool { return t.State == rtapi.Seeding })
+	a.showList(ctx, chatID, listSpec{kind: "seeding"})
 }
 
 func (a *application) hashing(ctx context.Context, chatID int64) {
-	a.sendStatus(ctx, chatID, "checking", "No torrents checking", func(t *rtapi.Torrent) bool { return t.State == rtapi.Hashing })
+	a.showList(ctx, chatID, listSpec{kind: "checking"})
 }
 
 func (a *application) errors(ctx context.Context, chatID int64) {
-	torrents, err := a.torrents(ctx, chatID)
-	if err != nil {
-		a.send(ctx, chatID, "errors: "+err.Error())
-		return
-	}
-	prefixes := hashPrefixes(torrents)
-	torrents = filterTorrents(torrents, func(t *rtapi.Torrent) bool { return t.State == rtapi.Error })
-	if len(torrents) == 0 {
-		a.send(ctx, chatID, "No errors")
-		return
-	}
-	var output strings.Builder
-	for _, torrent := range torrents {
-		fmt.Fprintf(&output, "<%s> %s\n%s\n\n", torrentRef(torrent, prefixes), torrent.Name, torrent.Message)
-	}
-	a.send(ctx, chatID, output.String())
+	a.showList(ctx, chatID, listSpec{kind: "errors"})
 }
 
 func (a *application) paused(ctx context.Context, chatID int64) {
-	torrents, err := a.torrents(ctx, chatID)
-	if err != nil {
-		a.send(ctx, chatID, "paused: "+err.Error())
-		return
-	}
-	prefixes := hashPrefixes(torrents)
-	torrents = filterTorrents(torrents, func(t *rtapi.Torrent) bool { return t.State == rtapi.Stopped })
-	if len(torrents) == 0 {
-		a.send(ctx, chatID, "No paused torrents")
-		return
-	}
-	a.send(ctx, chatID, renderTorrentDetailsWithPrefixes(torrents, prefixes))
+	a.showList(ctx, chatID, listSpec{kind: "paused"})
 }
 
+// info sends a card with buttons for each torrent.
 func (a *application) info(ctx context.Context, chatID int64, references []string) {
 	torrents, err := a.selected(ctx, chatID, references, false)
 	if err != nil {
@@ -244,28 +161,7 @@ func (a *application) info(ctx context.Context, chatID int64, references []strin
 		return
 	}
 	for _, torrent := range torrents {
-		text := formatTorrentInfo(torrent)
-		messageID, err := a.send(ctx, chatID, text)
-		if err != nil || a.noLive || messageID == 0 {
-			continue
-		}
-		hash := torrent.Hash
-		a.launch(ctx, func(liveCtx context.Context) {
-			for range a.duration {
-				if !a.wait(liveCtx) {
-					return
-				}
-				updated, err := a.rtorrent.GetTorrentContext(liveCtx, hash)
-				if err != nil {
-					a.logger.Printf("info: %s", err)
-					return
-				}
-				next := formatTorrentInfo(updated)
-				if err := a.editChanged(liveCtx, chatID, messageID, &text, next); err != nil && liveCtx.Err() == nil {
-					return
-				}
-			}
-		})
+		a.sendCard(ctx, chatID, torrent, "")
 	}
 }
 

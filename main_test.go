@@ -7,6 +7,7 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -315,11 +316,29 @@ type fakeTelegram struct {
 	retryAfter   int
 	sendAttempts int
 	documents    []sentDocument
+	edits        []sentMessage
+	answers      []callbackAnswer
 }
 
 type sentMessage struct {
-	chatID int64
-	text   string
+	chatID    int64
+	messageID int
+	text      string
+	buttons   [][]models.InlineKeyboardButton
+}
+
+type callbackAnswer struct {
+	text  string
+	alert bool
+}
+
+// keyboard decodes a request's inline keyboard, if it has one.
+func keyboard(request *http.Request) [][]models.InlineKeyboardButton {
+	var markup models.InlineKeyboardMarkup
+	if raw := request.FormValue("reply_markup"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &markup)
+	}
+	return markup.InlineKeyboard
 }
 
 type sentDocument struct {
@@ -356,15 +375,21 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 		f.chatIDs = append(f.chatIDs, chatID)
 		f.threadIDs = append(f.threadIDs, threadID)
 		f.methods = append(f.methods, method)
+		messageID := len(f.chatIDs)
 		if f.sent != nil {
-			f.sent <- sentMessage{chatID: chatID, text: request.FormValue("text")}
+			f.sent <- sentMessage{chatID: chatID, messageID: messageID, text: request.FormValue("text"), buttons: keyboard(request)}
 		}
-		result = fmt.Sprintf(`{"message_id":%d,"date":0,"chat":{"id":%d,"type":"private"}}`, len(f.chatIDs), chatID)
+		result = fmt.Sprintf(`{"message_id":%d,"date":0,"chat":{"id":%d,"type":"private"}}`, messageID, chatID)
 	case "editMessageText":
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
+		messageID, _ := strconv.Atoi(request.FormValue("message_id"))
 		f.chatIDs = append(f.chatIDs, chatID)
 		f.methods = append(f.methods, method)
-		result = fmt.Sprintf(`{"message_id":1,"date":0,"chat":{"id":%d,"type":"private"}}`, chatID)
+		f.edits = append(f.edits, sentMessage{chatID: chatID, messageID: messageID, text: request.FormValue("text"), buttons: keyboard(request)})
+		result = fmt.Sprintf(`{"message_id":%d,"date":0,"chat":{"id":%d,"type":"private"}}`, messageID, chatID)
+	case "answerCallbackQuery":
+		f.answers = append(f.answers, callbackAnswer{text: request.FormValue("text"), alert: request.FormValue("show_alert") == "true"})
+		result = "true"
 	case "sendDocument":
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
 		upload, header, err := request.FormFile("document")
