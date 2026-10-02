@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
@@ -151,7 +152,20 @@ func formatTorrentInfo(torrent *rtapi.Torrent) string {
 	return fmt.Sprintf("%s\n%s %s (%s) ↓ %s ↑ %s R: %.2f UP: %s\nAdded: %s, ETA: %s\nTracker: %s",
 		torrent.Name, torrent.State, formatBytes(torrent.Completed), torrent.Percent,
 		formatBytes(torrent.DownRate), formatBytes(torrent.UpRate), torrent.Ratio,
-		formatBytes(torrent.UpTotal), timeFromUnix(torrent.Age), formatETA(torrent), trackerHost(torrent.Tracker))
+		formatBytes(torrent.UpTotal), timeFromUnix(addedAt(torrent)), formatETA(torrent), trackerHost(torrent.Tracker))
+}
+
+// addedAt is when a torrent was added, in Unix seconds, as near as rTorrent
+// says: when it first started, which rTorrent remembers. A torrent that has
+// never started has only the time rTorrent loaded it, which a restart of
+// rTorrent resets.
+func addedAt(torrent *rtapi.Torrent) uint64 {
+	return cmp.Or(torrent.Started, torrent.Age)
+}
+
+// newestFirst orders torrents by when they were added, the newest first.
+func newestFirst(x, y *rtapi.Torrent) int {
+	return cmp.Compare(addedAt(y), addedAt(x))
 }
 
 func timeFromUnix(seconds uint64) string {

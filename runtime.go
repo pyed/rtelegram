@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -184,6 +185,15 @@ func (a *application) torrents(ctx context.Context, chatID int64) (rtapi.Torrent
 	}
 	var sorting rtapi.Sorting
 	a.state.read(func(data *stateData) { sorting = data.Sorts[chatID] })
-	torrents.Sort(sorting)
+	switch sorting {
+	case rtapi.ByAge:
+		// Age is reset when rTorrent restarts, so sort by when torrents
+		// were added.
+		slices.SortStableFunc(torrents, func(x, y *rtapi.Torrent) int { return newestFirst(y, x) })
+	case rtapi.ByAgeRev:
+		slices.SortStableFunc(torrents, newestFirst)
+	default:
+		torrents.Sort(sorting)
+	}
 	return torrents, nil
 }

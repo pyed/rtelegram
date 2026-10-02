@@ -389,6 +389,8 @@ func (f *fakeRtorrent) field(torrent *rtapi.Torrent, name string) string {
 		return flag(torrent.MultiFile)
 	case "d.timestamp.finished":
 		return xmlrpcInt(int64(torrent.Finished))
+	case "d.timestamp.started":
+		return xmlrpcInt(int64(torrent.Started))
 	}
 	f.t.Errorf("unexpected torrent field %s", name)
 	return xmlrpcString("")

@@ -80,6 +80,24 @@ func TestDigestCoversTheTimeSinceTheLastOne(t *testing.T) {
 	}
 }
 
+// rTorrent loads every torrent again when it restarts, so a digest counts as
+// added the torrents first started since the last one, and only those never
+// started by when rTorrent loaded them.
+func TestDigestAddedSurvivesAnRTorrentRestart(t *testing.T) {
+	restart := unix(day(2, 3, 0))
+	app, telegramFake, _ := buttonApp(t, rtapi.Torrents{
+		{Name: "old", Hash: strings.Repeat("A", 40), State: rtapi.Seeding, Started: unix(day(1, 9, 0)), Age: restart},
+		{Name: "new", Hash: strings.Repeat("B", 40), State: rtapi.Leeching, Started: unix(day(1, 20, 0)), Age: restart},
+		{Name: "never started", Hash: strings.Repeat("C", 40), State: rtapi.Stopped, Age: restart},
+	})
+	app.now = func() time.Time { return day(1, 10, 0) }
+	lastSentText(t, telegramFake, app, "digest 08:00")
+	app.checkDigest(context.Background(), day(2, 8, 0))
+	if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], "\nAdded: 2\n") {
+		t.Fatalf("digest after an rTorrent restart = %q", sent)
+	}
+}
+
 func TestDigestMissedWhileOfflineComesOnce(t *testing.T) {
 	clock := day(1, 9, 0)
 	app, telegramFake, _ := buttonApp(t, nil)

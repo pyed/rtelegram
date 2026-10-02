@@ -206,3 +206,32 @@ func TestLiveUpdatesEditTheReply(t *testing.T) {
 		t.Fatalf("got %d edits, want 2: %v", edits, telegramFake.methods)
 	}
 }
+
+// rTorrent loads every torrent again when it restarts, so when it loaded them
+// says little: latest, sort age, and cards go by when torrents first started,
+// and by when they were loaded only for those never started.
+func TestAddedTimesSurviveAnRTorrentRestart(t *testing.T) {
+	restart := uint64(5000)
+	hash := func(c string) string { return strings.Repeat(c, 40) }
+	app, telegramFake, _ := buttonApp(t, rtapi.Torrents{
+		{Name: "oldest", Hash: hash("A"), State: rtapi.Seeding, Started: 1000, Age: restart + 2},
+		{Name: "newest", Hash: hash("B"), State: rtapi.Seeding, Started: 3000, Age: restart},
+		{Name: "middle", Hash: hash("C"), State: rtapi.Seeding, Started: 2000, Age: restart + 1},
+		{Name: "never started", Hash: hash("D"), State: rtapi.Stopped, Age: restart + 3},
+	})
+	newestFirst := "<ddddddd> never started\n<bbbbbbb> newest\n<ccccccc> middle\n<aaaaaaa> oldest\n"
+	if got := lastSentText(t, telegramFake, app, "latest 4"); got != newestFirst {
+		t.Errorf("latest = %q, want %q", got, newestFirst)
+	}
+	lastSentText(t, telegramFake, app, "sort age")
+	if got := lastSentText(t, telegramFake, app, "list"); got != "<aaaaaaa> oldest\n<ccccccc> middle\n<bbbbbbb> newest\n<ddddddd> never started\n" {
+		t.Errorf("list sorted by age = %q", got)
+	}
+	lastSentText(t, telegramFake, app, "sort rev age")
+	if got := lastSentText(t, telegramFake, app, "list"); got != newestFirst {
+		t.Errorf("list sorted by reversed age = %q", got)
+	}
+	if got := lastSentText(t, telegramFake, app, "info a"); !strings.Contains(got, "\nAdded: "+timeFromUnix(1000)+",") {
+		t.Errorf("card = %q, want it added at %s", got, timeFromUnix(1000))
+	}
+}

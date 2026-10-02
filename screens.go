@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -140,7 +139,7 @@ func (a *application) listTorrents(ctx context.Context, chatID int64, spec listS
 	}
 	if kind.keep == nil {
 		torrents = slices.Clone(torrents)
-		slices.SortStableFunc(torrents, func(x, y *rtapi.Torrent) int { return cmp.Compare(y.Age, x.Age) })
+		slices.SortStableFunc(torrents, newestFirst)
 		return torrents[:min(spec.count, len(torrents))], prefixes, nil
 	}
 	return filterTorrents(torrents, func(torrent *rtapi.Torrent) bool { return kind.keep(torrent, spec.query) }), prefixes, nil

@@ -295,7 +295,7 @@ func (a *application) buildDigest(ctx context.Context, now time.Time, settings d
 	fmt.Fprintf(&text, "📰 %s digest, %s\nSince %s\n", strings.ToUpper(settings.period()[:1])+settings.period()[1:], now.Format("Mon 2 Jan"), since.Format(stamp))
 	from := uint64(max(since.Unix(), 0))
 	completed := filterTorrents(torrents, func(t *rtapi.Torrent) bool { return t.Finished >= from })
-	added := filterTorrents(torrents, func(t *rtapi.Torrent) bool { return t.Age >= from })
+	added := filterTorrents(torrents, func(t *rtapi.Torrent) bool { return addedAt(t) >= from })
 	fmt.Fprintf(&text, "\nCompleted: %d\nAdded: %d", len(completed), len(added))
 
 	if settings.Since != 0 && counted.Up >= settings.Uploaded && counted.Down >= settings.Downloaded {

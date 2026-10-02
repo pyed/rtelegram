@@ -341,12 +341,14 @@ Errors:
 Free space: 1.2 TiB
 ```
 
-Torrents with errors are grouped by tracker and message. Traffic is counted
-by the bot, so it is right even when rTorrent restarts between digests, which
-resets the totals rTorrent reports. `/digest now` shows the digest so far
-without resetting it, `/digest off` stops it, and `/digest` shows when it
-comes. A digest missed while the bot was offline comes as soon as it is back,
-once, and in a group it goes to the topic `/digest` was sent from.
+Torrents with errors are grouped by tracker and message. Torrents count as
+added when they first started, which rTorrent remembers across restarts.
+Traffic is counted by the bot, so it is right even when rTorrent restarts
+between digests, which resets the totals rTorrent reports. `/digest now` shows
+the digest so far without resetting it, `/digest off` stops it, and `/digest`
+shows when it comes. A digest missed while the bot was offline comes as soon
+as it is back, once, and in a group it goes to the topic `/digest` was sent
+from.
 
 ## Deleting data
 
