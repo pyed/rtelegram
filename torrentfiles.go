@@ -211,7 +211,7 @@ func (a *application) pressGet(ctx context.Context, key screenKey, scr *screen, 
 // outside.
 func (a *application) upload(ctx context.Context, chatID int64, torrent *rtapi.Torrent, file rtapi.File) error {
 	if a.dataRoot == "" {
-		return errors.New("sending files is disabled; configure an absolute -data-root")
+		return errors.New("sending files is off; set -data-root to the directory on this machine where rTorrent keeps data")
 	}
 	if !file.Complete() {
 		return fmt.Errorf("%s has not finished downloading", file.Path)

@@ -514,7 +514,7 @@ func TestUnauthorizedPrivateUsersAreLoggedOnce(t *testing.T) {
 	app.handle(context.Background(), &models.Update{Message: &models.Message{
 		From: &models.User{ID: 666}, Chat: models.Chat{ID: -100, Type: models.ChatTypeGroup}, Text: "/list",
 	}})
-	if got := strings.Count(logs.String(), "unauthorized Telegram user ID 555 (@mallory)"); got != 1 {
+	if got := strings.Count(logs.String(), "Telegram user ID 555 (@mallory) is not a master"); got != 1 || !strings.Contains(logs.String(), "add 555 to RT_MASTERS") {
 		t.Fatalf("logged the stranger %d times: %q", got, logs.String())
 	}
 	if strings.Contains(logs.String(), "666") || len(fake.methods) != 0 {

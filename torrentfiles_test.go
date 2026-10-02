@@ -147,7 +147,7 @@ func TestGetRefusesWithoutADataRootOrOutsideIt(t *testing.T) {
 	torrent, files := showTorrent(t, root)
 
 	app, telegramFake, _ := fileApp(t, "", torrent, files)
-	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 1"); got != "get: sending files is disabled; configure an absolute -data-root" {
+	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 1"); got != "get: sending files is off; set -data-root to the directory on this machine where rTorrent keeps data" {
 		t.Fatalf("without -data-root = %q", got)
 	}
 

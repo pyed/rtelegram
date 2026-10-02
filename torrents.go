@@ -170,7 +170,7 @@ func formatETA(torrent *rtapi.Torrent) string {
 
 func deletionRelative(root, target string) (string, error) {
 	if root == "" {
-		return "", errors.New("deldata is disabled; configure an absolute -data-root")
+		return "", errors.New("deldata is off; set -data-root to the directory on this machine where rTorrent keeps data")
 	}
 	return containedRelative(root, target)
 }

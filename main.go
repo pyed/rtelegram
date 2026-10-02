@@ -48,6 +48,19 @@ type principals struct {
 	ids map[int64]struct{}
 }
 
+// setupMaster is the placeholder master the setup steps start the bot with,
+// to learn the user's real ID. No Telegram account has it.
+const setupMaster = 1
+
+// setup reports whether the only master is the setup placeholder.
+func (p principals) setup() bool {
+	_, ok := p.ids[setupMaster]
+	return ok && len(p.ids) == 1
+}
+
+// dataRootOff is the -data-root value that turns /get and deldata off.
+const dataRootOff = "off"
+
 type config struct {
 	token           string
 	masters         principals
@@ -190,6 +203,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return fmt.Errorf("rTorrent: %w", err)
 	}
 	rtorrent.MaxResponseSize = cfg.maxResponseMiB << 20
+	dataRoot, dataRootNote := chooseDataRoot(ctx, cfg, rtorrent)
 
 	app = &application{
 		bot:             b,
@@ -203,7 +217,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		stallAfter:      cfg.stallAfter,
 		lowDisk:         cfg.lowDisk,
 		feedInterval:    cfg.feedInterval,
-		dataRoot:        cfg.dataRoot,
+		dataRoot:        dataRoot,
 		downloadRoot:    cfg.downloadRoot,
 		addStopped:      cfg.addStopped,
 		noLive:          cfg.noLive,
@@ -214,6 +228,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		state:           appState,
 	}
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
+	logger.Printf("[INFO] %s", dataRootNote)
+	if cfg.masters.setup() {
+		logger.Printf("[INFO] Setup: the only master is %d, a placeholder. Send @%s a private message from your Telegram account: "+
+			"it replies with your user ID, which also appears in this log. Then restart with RT_MASTERS (or -masters) set to that ID.",
+			setupMaster, me.Username)
+	}
 	app.launch(ctx, app.registerCommands)
 	app.launch(ctx, app.watchEvents)
 	app.launch(ctx, app.watchQuiet)
@@ -245,7 +265,8 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs.StringVar(&cfg.indexerURL, "indexer-url", "", "Torznab endpoint of Prowlarr or Jackett, for find and watch (or RT_INDEXER_URL)")
 	fs.StringVar(&cfg.indexerKey, "indexer-key", "", "API key of the indexer (or RT_INDEXER_KEY)")
 	fs.DurationVar(&cfg.feedInterval, "feed-interval", defaultFeedInterval, "How often watch rules search for new releases")
-	fs.StringVar(&cfg.dataRoot, "data-root", "", "Absolute local root allowed for deldata")
+	fs.StringVar(&cfg.dataRoot, "data-root", "", "Local directory beneath which /get and deldata may read and delete data "+
+		"(default: rTorrent's download directory, when rTorrent runs on this machine; off turns them off)")
 	fs.StringVar(&cfg.downloadRoot, "download-root", "", "Absolute rTorrent directory that upload captions may choose download directories under (default: rTorrent's default directory)")
 	fs.StringVar(&cfg.statePath, "state", "", "File where rtelegram keeps settings such as sort orders (default: rtelegram/state.json in the user's config directory)")
 	fs.BoolVar(&cfg.noLive, "no-live", false, "Do not edit messages with live updates")
@@ -257,7 +278,7 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 		return config{}, err
 	}
 	if len(fs.Args()) != 0 {
-		return config{}, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+		return config{}, unexpectedArguments(fs.Args())
 	}
 	if cfg.showVersion {
 		return cfg, nil
@@ -330,9 +351,9 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	if cfg.feedInterval < 5*time.Minute {
 		return config{}, errors.New("-feed-interval must be at least 5m")
 	}
-	if cfg.dataRoot != "" {
+	if cfg.dataRoot != "" && cfg.dataRoot != dataRootOff {
 		if !filepath.IsAbs(cfg.dataRoot) {
-			return config{}, errors.New("-data-root must be an absolute path")
+			return config{}, errors.New("-data-root must be an absolute path, or off")
 		}
 		cfg.dataRoot = filepath.Clean(cfg.dataRoot)
 	}
@@ -430,7 +451,7 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 	}
 	message := update.Message
 	if !a.masters.authorized(message.From) {
-		a.logIgnored(message)
+		a.ignore(ctx, message)
 		return
 	}
 	if message.MessageThreadID != 0 {
@@ -524,12 +545,18 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 	}
 }
 
-// logIgnored logs the numeric ID of each unauthorized user who messages the
-// bot privately, once, so an operator can find the ID to authorize. Group
-// members are not logged.
-func (a *application) logIgnored(message *models.Message) {
+// ignore handles a message from someone who is not a master. The numeric ID
+// of each such user who messages the bot privately is logged once, so an
+// operator can find the ID to authorize; group members are not logged. While
+// the only master is the setup placeholder, the bot also tells them their ID,
+// since there is nothing yet that a stranger could learn or control.
+func (a *application) ignore(ctx context.Context, message *models.Message) {
 	if message.From == nil || message.Chat.Type != models.ChatTypePrivate {
 		return
+	}
+	id := message.From.ID
+	if a.masters.setup() {
+		a.send(ctx, message.Chat.ID, fmt.Sprintf("Your Telegram user ID is %d. Restart rtelegram with RT_MASTERS=%d (or -masters %d), and this account can use the bot.", id, id, id))
 	}
 	a.ignoredMu.Lock()
 	defer a.ignoredMu.Unlock()
@@ -544,7 +571,25 @@ func (a *application) logIgnored(message *models.Message) {
 	if message.From.Username != "" {
 		username = " (@" + message.From.Username + ")"
 	}
-	a.logger.Printf("[WARN] Ignored a private message from unauthorized Telegram user ID %d%s", message.From.ID, username)
+	a.logger.Printf("[WARN] Telegram user ID %d%s is not a master, so the bot ignores them. To let them in, add %d to RT_MASTERS (or -masters) and restart.",
+		id, username, id)
+}
+
+// unexpectedArguments explains arguments that are not flags. rtelegram takes
+// none, so they are usually a mistyped flag; a lone "-", for one, ends the
+// flags, and what follows it is not read as flags.
+func unexpectedArguments(args []string) error {
+	message := "unexpected arguments: " + strings.Join(args, " ")
+	rest := strings.Join(args[1:], " ")
+	switch {
+	case args[0] == "-" && rest != "":
+		message += fmt.Sprintf(`; a lone "-" ends the flags, so %s was not read. Remove the "-"`, rest)
+	case strings.HasPrefix(args[0], "–") || strings.HasPrefix(args[0], "—"):
+		message += fmt.Sprintf("; %s starts with a long dash rather than a hyphen. Type flags with -, as in -data-root=/path", args[0])
+	default:
+		message += "; rtelegram takes only flags, such as -data-root=/path"
+	}
+	return errors.New(message)
 }
 
 func (a *application) whoami(ctx context.Context, chatID int64, user *models.User) {

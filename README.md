@@ -45,9 +45,9 @@ Then [set it up](#set-up), and let it
    RT_TOKEN=123456:secret RT_MASTERS=1 rtelegram -url /home/user/rtorrent/rpc.socket
    ```
 
-   The bot ignores you, and its log shows
-   `Ignored a private message from unauthorized Telegram user ID ...` with your
-   ID. Stop it with Ctrl+C.
+   While the only master is the placeholder `1`, the bot replies with your
+   user ID, and its log shows it too
+   (`Telegram user ID ... is not a master`). Stop it with Ctrl+C.
 
 4. **Run it with your ID.**
 
@@ -106,8 +106,13 @@ Flags, with the environment variables that can replace them:
   `-download-root` is the rTorrent directory that upload captions may choose
   download directories under; without it, they must be inside rTorrent's
   default directory.
-- **Files on disk.** `-data-root` enables `deldata` and `get` beneath that
-  absolute directory, on the machine rtelegram runs on.
+- **Files on disk.** `-data-root` is the directory, on the machine rtelegram
+  runs on, beneath which `get` sends files and `deldata` deletes them. When
+  rTorrent runs on the same machine (its address is a socket or a loopback
+  address such as `localhost:5000`), it defaults to rTorrent's download
+  directory; for a remote rTorrent, set it to where that data is mounted
+  locally, if anywhere. `-data-root off` turns both off. The log says which
+  applies at startup.
 - **Notifications.** `-watch-interval` is how often the bot checks rTorrent
   (default 30s), `-stall-after` how long a download may go without progress
   before it counts as stalled (default 30m; 0 turns it off), and `-low-disk`
@@ -163,7 +168,7 @@ no other torrent's hash starts with them.
 | `add URL...` | `ad` | Add torrents from URLs or magnet links, and confirm rTorrent loaded them |
 | `info HASH...` | `in` | Show each torrent's card |
 | `files HASH` | `fi` | List a torrent's files, and skip or prioritize them |
-| `get HASH [N]` | | Send a torrent's finished file, up to 50 MB (needs `-data-root`) |
+| `get HASH [N]` | | Send a torrent's finished file, up to 50 MB (see `-data-root`) |
 | `start`, `stop`, `check` `HASH...\|all` | `st`, `sp`, `ck` | Start, stop, or verify torrents |
 | `del HASH...` | | Remove torrents from rTorrent and keep their data |
 | `deldata HASH [confirm]` | | Remove a torrent and its data, after asking (see below) |
@@ -252,8 +257,8 @@ normal, and high; ⬜ Skip all and ✅ Download all change every file at once.
 Skipping files before they download is how to take only some episodes from a
 season pack.
 
-When rtelegram runs on the same machine as rTorrent and `-data-root` is set,
-finished files up to 50 MB (Telegram's limit for bots) get a 📥 button that
+When rtelegram can reach rTorrent's data (see `-data-root`), finished files up
+to 50 MB (Telegram's limit for bots) get a 📥 button that
 sends the file to the chat, and `/get HASH N` sends file N. A single-file
 torrent needs no N. Files are read only from inside `-data-root`, and symbolic
 links cannot lead outside it.
@@ -321,7 +326,7 @@ as soon as it is back, at most once a day, and in a group it goes to the topic
 
 `deldata HASH` asks for confirmation with buttons, and `deldata HASH confirm`
 deletes straight away. Either is intentionally stricter than ordinary deletion.
-It is disabled without `-data-root`, rejects roots, parents, symlink targets,
+It works only beneath `-data-root`, rejects roots, parents, symlink targets,
 and paths that overlap another loaded torrent, and refuses whenever rTorrent
 has not reported where another torrent keeps its data. rTorrent reports `d.base_path`
 only for torrents it has opened, so unopened torrents are located through
@@ -348,7 +353,7 @@ From v1, also:
 
 - Torrents are referenced by hash prefix, not by their position in a list.
 - `RT_MASTERS` takes numeric user IDs, not usernames.
-- `deldata` requires `-data-root`.
+- `deldata` works only beneath `-data-root`.
 - In groups, commands must start with `/`, and torrent files need an `/add`
   caption.
 

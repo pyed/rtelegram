@@ -2,13 +2,18 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/pyed/rtapi"
 )
 
 // nonSettings are the flags that act rather than configure, so a config file
@@ -126,4 +131,60 @@ func mkdirOwned(dir string, uid, gid int) error {
 		return os.Chown(dir, uid, gid)
 	}
 	return nil
+}
+
+// chooseDataRoot returns the local directory beneath which /get and deldata
+// may read and delete data, and a line for the log saying why. Without
+// -data-root it is rTorrent's download directory, when rTorrent runs on this
+// machine and that directory exists here: rTorrent reports paths on its own
+// machine, which mean nothing, or something else, on another.
+func chooseDataRoot(ctx context.Context, cfg config, rtorrent *rtapi.Rtorrent) (string, string) {
+	switch cfg.dataRoot {
+	case dataRootOff:
+		return "", "/get and deldata are off (-data-root off)"
+	case "":
+	default:
+		return cfg.dataRoot, "/get and deldata work beneath " + cfg.dataRoot
+	}
+	if !localAddress(cfg.rtorrentAddress) {
+		return "", "/get and deldata are off: rTorrent runs on another machine, so set -data-root to where its data is reachable here"
+	}
+	stats, err := rtorrent.StatsContext(ctx)
+	if err != nil {
+		return "", "/get and deldata are off: rTorrent's download directory is unknown (" + err.Error() + "); set -data-root"
+	}
+	if dir := localDirectory(stats.Directory); dir != "" {
+		return dir, "/get and deldata work beneath rTorrent's download directory, " + dir + " (set -data-root to change it, or -data-root off)"
+	}
+	return "", fmt.Sprintf("/get and deldata are off: rTorrent's download directory %q is not a directory here; set -data-root", stats.Directory)
+}
+
+// localAddress reports whether address reaches rTorrent on this machine: a
+// socket path, or a loopback host.
+func localAddress(address string) bool {
+	host := ""
+	if parsed, err := url.Parse(address); err == nil && (strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")) {
+		host = parsed.Hostname()
+	} else if splitHost, _, err := net.SplitHostPort(address); err == nil {
+		host = splitHost
+	} else {
+		return true // an SCGI socket path
+	}
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// localDirectory returns dir, cleaned, if it is an absolute path to a
+// directory on this machine, and "" otherwise.
+func localDirectory(dir string) string {
+	if dir == "" || !filepath.IsAbs(dir) {
+		return ""
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	return filepath.Clean(dir)
 }

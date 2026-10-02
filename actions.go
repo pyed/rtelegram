@@ -263,7 +263,7 @@ func (a *application) deldata(ctx context.Context, chatID int64, arguments []str
 		a.send(ctx, chatID, message)
 	case len(arguments) == 1:
 		if a.dataRoot == "" {
-			a.send(ctx, chatID, "deldata: deldata is disabled; configure an absolute -data-root")
+			a.send(ctx, chatID, "deldata: deldata is off; set -data-root to the directory on this machine where rTorrent keeps data")
 			return
 		}
 		torrents, err := a.selected(ctx, chatID, arguments, false)
