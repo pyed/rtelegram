@@ -30,8 +30,12 @@ type fakeRtorrent struct {
 	files     map[string][]rtapi.File // by torrent hash
 	load      func(body string) *rtapi.Torrent
 	stall     chan struct{} // when set, requests wait until it is closed
-	requests  []string
-	calls     []fakeCall
+	// onCall, when set, sees each call's method as the call arrives.
+	onCall func(method string)
+	// refuseLimits makes setting the global limits fail.
+	refuseLimits bool
+	requests     []string
+	calls        []fakeCall
 }
 
 type fakeCall struct {
@@ -221,6 +225,9 @@ func (f *fakeRtorrent) respond(body string) string {
 // call answers one XML-RPC call and reports whether the answer is a fault.
 func (f *fakeRtorrent) call(method string, args []string, body string) (string, bool) {
 	f.calls = append(f.calls, fakeCall{method: method, args: args})
+	if f.onCall != nil {
+		f.onCall(method)
+	}
 	switch method {
 	case "system.client_version":
 		return xmlrpcString("0.9.8"), false
@@ -264,7 +271,7 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		return xmlrpcInt(int64(f.limits[1])), false
 	case "throttle.global_down.max_rate.set", "throttle.global_up.max_rate.set":
 		limit, err := strconv.ParseUint(args[1], 10, 64)
-		if err != nil {
+		if err != nil || f.refuseLimits {
 			return xmlrpcFault(-503, "bad limit"), true
 		}
 		if method == "throttle.global_down.max_rate.set" {

@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -187,4 +190,41 @@ func TestQuietRejectsBadSchedules(t *testing.T) {
 			t.Fatalf("a bad schedule was saved: %+v", data.Quiet)
 		}
 	})
+}
+
+// Quiet hours save the limits to restore before changing them, so a restart
+// during quiet hours still restores them, and a refused change is tried again.
+func TestQuietHoursSaveLimitsBeforeChangingThem(t *testing.T) {
+	clock := at(22, 30)
+	app, telegramFake, rtorrentFake := quietApp(t, &clock)
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	saved, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.state = saved
+	lastSentText(t, telegramFake, app, "quiet 23:00-07:00 down 2M")
+
+	rtorrentFake.set(func(f *fakeRtorrent) { f.refuseLimits = true })
+	app.checkQuiet(context.Background(), at(23, 0))
+	app.state.read(func(data *stateData) {
+		if data.Quiet.Saved != nil {
+			t.Fatalf("kept limits to restore after the change was refused: %v", *data.Quiet.Saved)
+		}
+	})
+
+	var savedFirst atomic.Bool
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.refuseLimits = false
+		f.onCall = func(method string) {
+			if method == "throttle.global_down.max_rate.set" {
+				content, _ := os.ReadFile(statePath)
+				savedFirst.Store(strings.Contains(string(content), `"saved"`))
+			}
+		}
+	})
+	app.checkQuiet(context.Background(), at(23, 1))
+	if limitsOf(rtorrentFake) != [2]uint64{2 << 20, 2 << 20} || !savedFirst.Load() {
+		t.Fatalf("limits %v; saved before changing them: %v", limitsOf(rtorrentFake), savedFirst.Load())
+	}
 }

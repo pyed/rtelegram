@@ -324,24 +324,36 @@ func (a *application) checkQuiet(ctx context.Context, now time.Time) {
 		if quiet.Up != nil {
 			quietUp = *quiet.Up
 		}
-		if err := a.rtorrent.SetGlobalLimitsContext(ctx, quietDown, quietUp); err != nil {
-			a.logger.Printf("[ERROR] quiet hours: %s", err)
-			return
-		}
-		a.state.update(func(data *stateData) {
+		// Remember the limits before changing them, so that they come back
+		// even if the bot restarts during quiet hours.
+		if err := a.state.update(func(data *stateData) {
 			if data.Quiet != nil {
 				data.Quiet.Saved = &[2]uint64{down, up}
 			}
-		})
+		}); err != nil {
+			a.logger.Printf("[ERROR] quiet hours: saving the limits to restore: %s", err)
+		}
+		if err := a.rtorrent.SetGlobalLimitsContext(ctx, quietDown, quietUp); err != nil {
+			a.logger.Printf("[ERROR] quiet hours: %s", err)
+			// Forget them again, so the next check tries once more.
+			a.state.update(func(data *stateData) {
+				if data.Quiet != nil {
+					data.Quiet.Saved = nil
+				}
+			})
+			return
+		}
 	case !inside && quiet.Saved != nil:
 		if err := a.rtorrent.SetGlobalLimitsContext(ctx, quiet.Saved[0], quiet.Saved[1]); err != nil {
 			a.logger.Printf("[ERROR] quiet hours: %s", err)
 			return
 		}
-		a.state.update(func(data *stateData) {
+		if err := a.state.update(func(data *stateData) {
 			if data.Quiet != nil {
 				data.Quiet.Saved = nil
 			}
-		})
+		}); err != nil {
+			a.logger.Printf("[ERROR] quiet hours: %s", err)
+		}
 	}
 }
