@@ -154,7 +154,7 @@ func TestTorrentCardActsAndGoesBack(t *testing.T) {
 	}
 
 	press(app, master, list.messageID, "back")
-	if back := lastEdit(t, telegramFake); !strings.HasPrefix(back.text, "<aaaaaaa> Debian\n") {
+	if back := lastEdit(t, telegramFake); !strings.HasPrefix(back.text, "<aaa> Debian\n") {
 		t.Fatalf("back = %q", back.text)
 	}
 }

@@ -63,7 +63,7 @@ func TestOnlyTrackerRepliesFetchTrackers(t *testing.T) {
 func TestAddConfirmationListsOnlyHashes(t *testing.T) {
 	library := make(rtapi.Torrents, 200)
 	for i := range library {
-		library[i] = &rtapi.Torrent{Name: fmt.Sprintf("torrent %d", i), Hash: fmt.Sprintf("%040X", i+1), Age: uint64(i)}
+		library[i] = &rtapi.Torrent{Name: fmt.Sprintf("torrent %d", i), Hash: fmt.Sprintf("%03X", i+1) + strings.Repeat("0", 37), Age: uint64(i)}
 	}
 	for _, source := range []string{
 		"magnet:?xt=urn:btih:" + strings.Repeat("F", 40) + "&dn=New",
@@ -84,7 +84,7 @@ func TestAddConfirmationListsOnlyHashes(t *testing.T) {
 			rtorrentFake.set(func(f *fakeRtorrent) { f.torrents = append(f.torrents, added) })
 		}()
 		app.add(context.Background(), 111, []string{source})
-		if text := nextSent(t, telegramFake).text; text != "Added: <fffffff> New" {
+		if text := nextSent(t, telegramFake).text; text != "Added: <fff> New" {
 			t.Fatalf("%s: reply = %q", source, text)
 		}
 		app.wg.Wait()
@@ -118,7 +118,7 @@ func TestAddConfirmationReportsTheNewestOfSeveral(t *testing.T) {
 		logger: log.New(io.Discard, "", 0), addTimeout: time.Second, addPollInterval: 10 * time.Millisecond,
 	}
 	app.add(context.Background(), 111, []string{"https://tracker.example/linked.torrent"})
-	if text := nextSent(t, telegramFake).text; text != "Added: <bbbbbbb> linked" {
+	if text := nextSent(t, telegramFake).text; text != "Added: <bbb> linked" {
 		t.Fatalf("reply = %q", text)
 	}
 	app.wg.Wait()

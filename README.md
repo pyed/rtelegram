@@ -151,8 +151,11 @@ the buttons, even in groups, and the bot remembers the buttons of its last 500
 messages.
 
 Commands can also name torrents by the hash prefix that lists show in angle
-brackets, such as `<1c60cbe>`, or by fewer characters, down to one, as long as
-no other torrent's hash starts with them.
+brackets, such as `<1c6>`, or by fewer characters, down to one, as long as no
+other torrent's hash starts with them. Lists show every torrent's hash to the
+same length: the fewest characters that tell all loaded torrents apart, and at
+least three. A few dozen torrents usually need three, a hundred four, and a
+few thousand six or seven.
 
 | Command | Alias | What it does |
 |---|---|---|

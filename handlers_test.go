@@ -58,28 +58,28 @@ func TestCommandHandlers(t *testing.T) {
 		replies  []reply
 		check    func(*testing.T, *fakeRtorrent)
 	}{
-		{"list", []string{"list"}, []reply{{is: "<aaaaaaa> Debian\n<bbbbbbb> Ubuntu\n<ccccccc> Arch\n<ddddddd> Fedora\n<eeeeeee> Gentoo\n"}}, nil},
-		{"list by tracker", []string{"li other"}, []reply{{is: "<bbbbbbb> Ubuntu\n"}}, nil},
+		{"list", []string{"list"}, []reply{{is: "<aaa> Debian\n<bbb> Ubuntu\n<ccc> Arch\n<ddd> Fedora\n<eee> Gentoo\n"}}, nil},
+		{"list by tracker", []string{"li other"}, []reply{{is: "<bbb> Ubuntu\n"}}, nil},
 		{"list without matches", []string{"list nowhere"}, []reply{{is: "list: No torrents"}}, nil},
-		{"down", []string{"dl"}, []reply{{is: "<aaaaaaa> Debian\n"}}, nil},
-		{"seeding", []string{"seeding"}, []reply{{is: "<bbbbbbb> Ubuntu\n"}}, nil},
-		{"paused", []string{"pa"}, []reply{{has: []string{"<ccccccc> Arch\nStopped 512 B (50.0%)"}, lacks: []string{"Debian"}}}, nil},
-		{"checking", []string{"checking"}, []reply{{is: "<ddddddd> Fedora\n"}}, nil},
-		{"errors", []string{"er"}, []reply{{is: "<eeeeeee> Gentoo\nTracker: [Timeout was reached]\n\n"}}, nil},
-		{"search", []string{"se ub"}, []reply{{is: "<bbbbbbb> Ubuntu\n"}}, nil},
+		{"down", []string{"dl"}, []reply{{is: "<aaa> Debian\n"}}, nil},
+		{"seeding", []string{"seeding"}, []reply{{is: "<bbb> Ubuntu\n"}}, nil},
+		{"paused", []string{"pa"}, []reply{{has: []string{"<ccc> Arch\nStopped 512 B (50.0%)"}, lacks: []string{"Debian"}}}, nil},
+		{"checking", []string{"checking"}, []reply{{is: "<ddd> Fedora\n"}}, nil},
+		{"errors", []string{"er"}, []reply{{is: "<eee> Gentoo\nTracker: [Timeout was reached]\n\n"}}, nil},
+		{"search", []string{"se ub"}, []reply{{is: "<bbb> Ubuntu\n"}}, nil},
 		{"search usage", []string{"search"}, []reply{{is: "search: needs an argument"}}, nil},
 		{"search without matches", []string{"search zz"}, []reply{{is: "No matches"}}, nil},
-		{"latest", []string{"la 2"}, []reply{{is: "<bbbbbbb> Ubuntu\n<ccccccc> Arch\n"}}, nil},
+		{"latest", []string{"la 2"}, []reply{{is: "<bbb> Ubuntu\n<ccc> Arch\n"}}, nil},
 		{"latest rejects words", []string{"latest two"}, []reply{{is: "latest: argument must be a positive number"}}, nil},
 		{"head rejects zero", []string{"head 0"}, []reply{{is: "head: argument must be a positive number"}}, nil},
 		{"trackers", []string{"tr"}, []reply{{is: "2 - tracker.example.org\n1 - tracker.other.net\n2 - unknown\n"}}, nil},
 		{"count", []string{"co"}, []reply{{is: "Leeching: 1\nSeeding: 1\nComplete: 0\nStopped: 1\nHashing: 1\nError: 1\n\nTotal: 5"}}, nil},
-		{"head", []string{"he 2"}, []reply{{has: []string{"<aaaaaaa> Debian\nLeeching", "<bbbbbbb> Ubuntu\nSeeding"}, lacks: []string{"Arch"}}}, nil},
-		{"tail", []string{"ta 1"}, []reply{{has: []string{"<eeeeeee> Gentoo\nError"}, lacks: []string{"Fedora"}}}, nil},
+		{"head", []string{"he 2"}, []reply{{has: []string{"<aaa> Debian\nLeeching", "<bbb> Ubuntu\nSeeding"}, lacks: []string{"Arch"}}}, nil},
+		{"tail", []string{"ta 1"}, []reply{{has: []string{"<eee> Gentoo\nError"}, lacks: []string{"Fedora"}}}, nil},
 		{"active", []string{"ac"}, []reply{{has: []string{"Debian", "Ubuntu"}, lacks: []string{"Arch", "Fedora", "Gentoo"}}}, nil},
 		{"sort then list", []string{"so rev name", "list"}, []reply{
 			{is: "sort: by reversed name"},
-			{is: "<bbbbbbb> Ubuntu\n<eeeeeee> Gentoo\n<ddddddd> Fedora\n<aaaaaaa> Debian\n<ccccccc> Arch\n"},
+			{is: "<bbb> Ubuntu\n<eee> Gentoo\n<ddd> Fedora\n<aaa> Debian\n<ccc> Arch\n"},
 		}, nil},
 		{"sort usage", []string{"sort", "sort bogus"}, []reply{
 			{is: "sort: [rev] name|downrate|uprate|size|ratio|age|upload"},
@@ -87,7 +87,7 @@ func TestCommandHandlers(t *testing.T) {
 		}, nil},
 		{"info", []string{"in bbbbbbb"}, []reply{{has: []string{"Ubuntu\nSeeding 2.0 KiB (100%)", "R: 1.50 UP: 3.0 KiB", "Tracker: tracker.other.net"}}}, nil},
 		{"info takes one character", []string{"info b"}, []reply{{has: []string{"Ubuntu\nSeeding"}}}, nil},
-		{"info takes a bracketed prefix", []string{"info <bbbbbbb>"}, []reply{{has: []string{"Ubuntu\nSeeding"}}}, nil},
+		{"info takes a bracketed prefix", []string{"info <bbb>"}, []reply{{has: []string{"Ubuntu\nSeeding"}}}, nil},
 		{"stop takes short prefixes", []string{"sp a cc"}, []reply{{is: "Stopped: Debian, Arch"}}, calledWith("d.stop", "A", "C")},
 		{"stop", []string{"sp aaaaaaa"}, []reply{{is: "Stopped: Debian"}}, calledWith("d.stop", "A")},
 		{"start all", []string{"st all"}, []reply{{is: "Started: Debian, Ubuntu, Arch, Fedora, Gentoo"}},
@@ -219,12 +219,12 @@ func TestAddedTimesSurviveAnRTorrentRestart(t *testing.T) {
 		{Name: "middle", Hash: hash("C"), State: rtapi.Seeding, Started: 2000, Age: restart + 1},
 		{Name: "never started", Hash: hash("D"), State: rtapi.Stopped, Age: restart + 3},
 	})
-	newestFirst := "<ddddddd> never started\n<bbbbbbb> newest\n<ccccccc> middle\n<aaaaaaa> oldest\n"
+	newestFirst := "<ddd> never started\n<bbb> newest\n<ccc> middle\n<aaa> oldest\n"
 	if got := lastSentText(t, telegramFake, app, "latest 4"); got != newestFirst {
 		t.Errorf("latest = %q, want %q", got, newestFirst)
 	}
 	lastSentText(t, telegramFake, app, "sort age")
-	if got := lastSentText(t, telegramFake, app, "list"); got != "<aaaaaaa> oldest\n<ccccccc> middle\n<bbbbbbb> newest\n<ddddddd> never started\n" {
+	if got := lastSentText(t, telegramFake, app, "list"); got != "<aaa> oldest\n<ccc> middle\n<bbb> newest\n<ddd> never started\n" {
 		t.Errorf("list sorted by age = %q", got)
 	}
 	lastSentText(t, telegramFake, app, "sort rev age")

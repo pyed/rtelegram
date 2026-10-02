@@ -28,9 +28,11 @@ func formatBytes(bytes uint64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exponent])
 }
 
-// hashPrefixes maps each lowercase hash to its shortest unique prefix of at
-// least seven characters. Once sorted, a hash shares its longest common prefix
-// with a neighbour, so comparing neighbours keeps this O(n log n).
+// minPrefixLength is the fewest characters of a hash that lists show.
+const minPrefixLength = 3
+
+// hashPrefixes maps each lowercase hash to the prefix lists show for it; see
+// prefixesOf.
 func hashPrefixes(torrents rtapi.Torrents) map[string]string {
 	hashes := make([]string, len(torrents))
 	for i, torrent := range torrents {
@@ -39,8 +41,11 @@ func hashPrefixes(torrents rtapi.Torrents) map[string]string {
 	return prefixesOf(hashes)
 }
 
-// prefixesOf maps each of hashes, in lower case, to its shortest unique prefix
-// of at least seven characters.
+// prefixesOf maps each of hashes, in lower case, to the prefix lists show for
+// it. Every prefix has the same length: the fewest characters that tell all
+// the hashes apart, and at least minPrefixLength, so the length grows with
+// the library. Once sorted, a hash shares its longest common prefix with a
+// neighbour, so comparing neighbours keeps this O(n log n).
 func prefixesOf(all []string) map[string]string {
 	hashes := make([]string, 0, len(all))
 	for _, hash := range all {
@@ -49,15 +54,13 @@ func prefixesOf(all []string) map[string]string {
 		}
 	}
 	slices.Sort(hashes)
+	hashes = slices.Compact(hashes)
+	length := minPrefixLength
+	for i := 1; i < len(hashes); i++ {
+		length = max(length, commonPrefixLength(hashes[i-1], hashes[i])+1)
+	}
 	result := make(map[string]string, len(hashes))
-	for i, hash := range hashes {
-		length := 7
-		if i > 0 {
-			length = max(length, commonPrefixLength(hash, hashes[i-1])+1)
-		}
-		if i+1 < len(hashes) {
-			length = max(length, commonPrefixLength(hash, hashes[i+1])+1)
-		}
+	for _, hash := range hashes {
 		result[hash] = hash[:min(length, len(hash))]
 	}
 	return result

@@ -649,7 +649,7 @@ func TestTelegramUploadReachesRtorrentAsRawBytesWithoutToken(t *testing.T) {
 		Document: &models.Document{FileID: "file", FileName: "a.torrent", FileSize: int64(len(file))},
 	}
 	app.receiveTorrent(context.Background(), 111, message, "d=/remote/path linux")
-	expectSent(t, telegramFake.sent, 111, "Added: <"+strings.ToLower(hash[:7])+"> test")
+	expectSent(t, telegramFake.sent, 111, "Added: <"+strings.ToLower(hash[:minPrefixLength])+"> test")
 	app.wg.Wait()
 
 	loads := rtorrentFake.requestsContaining("load.raw")
@@ -864,11 +864,11 @@ func TestAddConfirmsWhatRtorrentLoaded(t *testing.T) {
 		request bool
 	}{
 		{"magnet appears", magnet, nil, &rtapi.Torrent{Name: "Debian 12", Hash: magnetHash},
-			"Added: <1c60cbe> Debian 12", true},
+			"Added: <1c6> Debian 12", true},
 		{"magnet already loaded", magnet, rtapi.Torrents{{Name: "Debian 12", Hash: magnetHash}}, nil,
 			"add: Debian 12 is already loaded", false},
 		{"link appears", link, nil, &rtapi.Torrent{Name: "linux", Hash: strings.Repeat("B", 40)},
-			"Added: <bbbbbbb> linux", true},
+			"Added: <bbb> linux", true},
 		{"nothing appears", link, nil, nil,
 			"add: rTorrent did not load linux.torrent within 0s", true},
 	}
@@ -992,30 +992,32 @@ func TestDeldataRefusesUnknownOrSharedData(t *testing.T) {
 	}
 }
 
-// referenceHashPrefixes is the original quadratic definition, kept as an
-// oracle for the sorted implementation.
+// referenceHashPrefixes is the obvious, quadratic definition, kept as an
+// oracle for the sorted implementation: every hash cut to the fewest
+// characters, at least three, at which no two different hashes look alike.
 func referenceHashPrefixes(torrents rtapi.Torrents) map[string]string {
-	result := make(map[string]string, len(torrents))
+	var hashes []string
 	for _, torrent := range torrents {
-		hash := strings.ToLower(strings.TrimSpace(torrent.Hash))
-		if hash == "" {
-			continue
+		if hash := strings.ToLower(strings.TrimSpace(torrent.Hash)); hash != "" && !slices.Contains(hashes, hash) {
+			hashes = append(hashes, hash)
 		}
-		length := min(7, len(hash))
-		for length < len(hash) {
-			unique := true
-			for _, other := range torrents {
-				if other != torrent && strings.HasPrefix(strings.ToLower(strings.TrimSpace(other.Hash)), hash[:length]) {
-					unique = false
-					break
-				}
+	}
+	cut := func(hash string, length int) string { return hash[:min(length, len(hash))] }
+	length := 3
+	for alike := true; alike; {
+		alike = false
+		for i, hash := range hashes {
+			for _, other := range hashes[i+1:] {
+				alike = alike || cut(hash, length) == cut(other, length)
 			}
-			if unique {
-				break
-			}
+		}
+		if alike {
 			length++
 		}
-		result[hash] = hash[:length]
+	}
+	result := make(map[string]string, len(hashes))
+	for _, hash := range hashes {
+		result[hash] = cut(hash, length)
 	}
 	return result
 }
@@ -1031,26 +1033,53 @@ func randomTorrents(count int) rtapi.Torrents {
 }
 
 func TestHashPrefixesMatchQuadraticReference(t *testing.T) {
-	torrents := randomTorrents(500)
+	planted := randomTorrents(500)
 	random := rand.New(rand.NewPCG(3, 4))
-	for i := 1; i < len(torrents); i += 3 {
+	for i := 1; i < len(planted); i += 3 {
 		// Share a 7-12 character prefix with an earlier hash.
-		prefix := torrents[random.IntN(i)].Hash[:7+random.IntN(6)]
-		torrents[i].Hash = prefix + torrents[i].Hash[len(prefix):]
+		prefix := planted[random.IntN(i)].Hash[:7+random.IntN(6)]
+		planted[i].Hash = prefix + planted[i].Hash[len(prefix):]
 	}
-	torrents[2].Hash = strings.ToLower(torrents[2].Hash)
-	torrents = append(torrents,
-		&rtapi.Torrent{Hash: torrents[10].Hash},
-		&rtapi.Torrent{Hash: " " + torrents[20].Hash[:12] + " "},
+	planted[2].Hash = strings.ToLower(planted[2].Hash)
+	planted = append(planted,
+		&rtapi.Torrent{Hash: planted[10].Hash},
+		&rtapi.Torrent{Hash: " " + planted[20].Hash[:12] + " "},
 		&rtapi.Torrent{},
 	)
-	got, want := hashPrefixes(torrents), referenceHashPrefixes(torrents)
-	if len(got) != len(want) {
-		t.Fatalf("got %d prefixes, want %d", len(got), len(want))
+	for name, torrents := range map[string]rtapi.Torrents{
+		"none": nil, "one": randomTorrents(1), "a few": randomTorrents(20), "hundreds": randomTorrents(500), "planted": planted,
+	} {
+		got, want := hashPrefixes(torrents), referenceHashPrefixes(torrents)
+		if len(got) != len(want) {
+			t.Fatalf("%s: got %d prefixes, want %d", name, len(got), len(want))
+		}
+		for hash, prefix := range want {
+			if got[hash] != prefix {
+				t.Fatalf("%s: prefix for %s = %q, want %q", name, hash, got[hash], prefix)
+			}
+		}
 	}
-	for hash, prefix := range want {
-		if got[hash] != prefix {
-			t.Fatalf("prefix for %s = %q, want %q", hash, got[hash], prefix)
+}
+
+// Every torrent shows the same number of characters: the fewest that tell
+// them all apart, at least three, and as many as that takes.
+func TestHashPrefixesShareOneLength(t *testing.T) {
+	hash := func(start string) string { return start + strings.Repeat("0", 40-len(start)) }
+	for _, test := range []struct {
+		hashes []string
+		want   int
+	}{
+		{[]string{hash("A")}, 3},
+		{[]string{hash("A"), hash("B"), hash("C")}, 3},
+		{[]string{hash("AB1"), hash("AB2"), hash("F")}, 3},
+		{[]string{hash("ABC1"), hash("ABC2"), hash("F")}, 4},
+		{[]string{hash("ABCDEF0123451"), hash("ABCDEF0123452"), hash("F")}, 13},
+	} {
+		prefixes := prefixesOf(test.hashes)
+		for _, h := range test.hashes {
+			if want := strings.ToLower(h[:test.want]); prefixes[strings.ToLower(h)] != want {
+				t.Errorf("%v: prefix of %s = %q, want %q", test.hashes, h, prefixes[strings.ToLower(h)], want)
+			}
 		}
 	}
 }
