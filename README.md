@@ -312,6 +312,13 @@ about. Each is a button to turn on or off:
 `/notify on` and `/notify off` turn everything on or off at once. In a group
 with topics, notifications go to the topic `/notify` was sent from.
 
+When more than three things of a kind happen at once, such as a batch of
+downloads finishing together, they come in one message. Errors are grouped by
+tracker and message: once some are announced, new ones with the same tracker
+and message wait an hour, then come together unless they have cleared, and
+the wait doubles, up to a day, while they keep coming. So a tracker that
+fails for every torrent makes one message, not one per torrent.
+
 The bot checks rTorrent itself every `-watch-interval`, so nothing needs to be
 added to `rtorrent.rc`. Torrents that finish while the bot is offline are
 announced when it starts again. Subscriptions are kept in the `-state` file. A

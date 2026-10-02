@@ -24,6 +24,19 @@ const (
 	defaultStallAfter    = 30 * time.Minute
 	// Free space is checked where at most this many downloads land.
 	maxDiskChecks = 10
+	// maxSingleEvents is how many events of a kind one check announces in
+	// messages of their own; more come in one message, which lists up to
+	// maxListedEvents of them.
+	maxSingleEvents = 3
+	maxListedEvents = 10
+	// maxErrorKinds is how many groups of errors a message lists.
+	maxErrorKinds = 10
+	// errorHold is how long new errors wait after others with the same
+	// tracker and message were announced, so that a tracker failing for
+	// every torrent is announced once rather than for each. It doubles while
+	// such errors keep coming, up to maxErrorHold.
+	errorHold    = time.Hour
+	maxErrorHold = 24 * time.Hour
 )
 
 // notifyEvents are the events a chat can subscribe to, as /notify lists them.
@@ -37,7 +50,8 @@ var notifyEvents = []struct{ name, label string }{
 // An event is something the watcher noticed.
 type event struct {
 	kind string
-	text string
+	text string // the message announcing the event on its own
+	line string // the event's line in a message announcing several
 	hash string // the torrent, for a details button; empty for disk events
 }
 
@@ -50,6 +64,27 @@ type watcher struct {
 	progress  map[string]progressMark
 	lowDisk   bool
 	lastError string
+	// notices hold back new errors like ones announced lately.
+	notices map[errorKey]*errorNotice
+}
+
+// errorKey is what errors are grouped by: the tracker, and its message.
+type errorKey struct{ tracker, message string }
+
+func errorKeyOf(torrent *rtapi.Torrent) errorKey {
+	return errorKey{trackerHost(torrent.Tracker), strings.TrimSpace(torrent.Message)}
+}
+
+func compareErrorKeys(x, y errorKey) int {
+	return cmp.Or(cmp.Compare(x.tracker, y.tracker), cmp.Compare(x.message, y.message))
+}
+
+// An errorNotice holds back new errors with the tracker and message of ones
+// just announced.
+type errorNotice struct {
+	until time.Time                 // new errors wait until then
+	hold  time.Duration             // the wait after the next announcement
+	held  map[string]*rtapi.Torrent // the errors waiting, by hash
 }
 
 type progressMark struct {
@@ -93,11 +128,32 @@ func (a *application) checkEvents(ctx context.Context, w *watcher, now time.Time
 		return
 	}
 	w.lastError = ""
-	events := a.completedEvents(torrents)
-	events = append(events, w.torrentEvents(torrents, now, a.stallAfter)...)
+	errored, stalled := w.torrentEvents(torrents, now, a.stallAfter)
+	events := together(a.completedEvents(torrents), "✅ Completed: %d downloads")
+	events = append(events, a.errorEvents(ctx, w, errored, torrents, now)...)
+	events = append(events, together(stalled, "🐢 Stalled: %d downloads")...)
 	events = append(events, a.diskEvents(ctx, w, torrents)...)
 	w.started = true
 	a.deliver(ctx, events)
+}
+
+// together returns events of one kind as they are, or, when there are more
+// than maxSingleEvents, as one event that lists them under heading, which
+// says how many there are.
+func together(events []event, heading string) []event {
+	if len(events) <= maxSingleEvents {
+		return events
+	}
+	var text strings.Builder
+	fmt.Fprintf(&text, heading, len(events))
+	for i, e := range events {
+		if i == maxListedEvents {
+			fmt.Fprintf(&text, "\n• and %d more", len(events)-i)
+			break
+		}
+		text.WriteString("\n• " + e.line)
+	}
+	return []event{{kind: events[0].kind, text: text.String()}}
 }
 
 // subscribed reports whether any chat wants notifications.
@@ -127,8 +183,9 @@ func (a *application) completedEvents(torrents rtapi.Torrents) []event {
 	for _, torrent := range finished {
 		fresh := torrent.Finished > watermark || (torrent.Finished == watermark && !slices.Contains(announced, torrent.Hash))
 		if watermark != 0 && fresh {
-			events = append(events, event{eventCompleted,
-				fmt.Sprintf("✅ Completed: %s\n%s, ratio %.2f", torrent.Name, formatBytes(torrent.Size), torrent.Ratio), torrent.Hash})
+			events = append(events, event{kind: eventCompleted,
+				text: fmt.Sprintf("✅ Completed: %s\n%s, ratio %.2f", torrent.Name, formatBytes(torrent.Size), torrent.Ratio),
+				line: fmt.Sprintf("%s, %s", torrent.Name, formatBytes(torrent.Size)), hash: torrent.Hash})
 		}
 		newest = max(newest, torrent.Finished)
 	}
@@ -148,9 +205,10 @@ func (a *application) completedEvents(torrents rtapi.Torrents) []event {
 	return events
 }
 
-// torrentEvents finds torrents that newly have an error, and downloads that
-// have made no progress for stallAfter.
-func (w *watcher) torrentEvents(torrents rtapi.Torrents, now time.Time, stallAfter time.Duration) []event {
+// torrentEvents returns the torrents that newly have an error, and events for
+// downloads that have made no progress for stallAfter.
+func (w *watcher) torrentEvents(torrents rtapi.Torrents, now time.Time, stallAfter time.Duration) (rtapi.Torrents, []event) {
+	var fresh rtapi.Torrents
 	var events []event
 	errored := make(map[string]bool)
 	progress := make(map[string]progressMark)
@@ -158,7 +216,7 @@ func (w *watcher) torrentEvents(torrents rtapi.Torrents, now time.Time, stallAft
 		if torrent.State == rtapi.Error {
 			errored[torrent.Hash] = true
 			if w.started && !w.errored[torrent.Hash] {
-				events = append(events, event{eventErrors, fmt.Sprintf("⚠️ Error: %s\n%s", torrent.Name, torrent.Message), torrent.Hash})
+				fresh = append(fresh, torrent)
 			}
 		}
 		if torrent.State != rtapi.Leeching || stallAfter <= 0 {
@@ -170,13 +228,123 @@ func (w *watcher) torrentEvents(torrents rtapi.Torrents, now time.Time, stallAft
 			mark = progressMark{completed: torrent.Completed, since: now}
 		case !mark.announced && now.Sub(mark.since) >= stallAfter:
 			mark.announced = true
-			events = append(events, event{eventStalled, fmt.Sprintf("🐢 Stalled: %s\nNo progress for %s, at %s",
-				torrent.Name, now.Sub(mark.since).Round(time.Minute), torrent.Percent), torrent.Hash})
+			stalled := now.Sub(mark.since).Round(time.Minute)
+			events = append(events, event{kind: eventStalled,
+				text: fmt.Sprintf("🐢 Stalled: %s\nNo progress for %s, at %s", torrent.Name, stalled, torrent.Percent),
+				line: fmt.Sprintf("%s, at %s, no progress for %s", torrent.Name, torrent.Percent, stalled), hash: torrent.Hash})
 		}
 		progress[torrent.Hash] = mark
 	}
 	w.errored, w.progress = errored, progress
+	return fresh, events
+}
+
+// errorEvents announces fresh, the torrents that newly have errors. An error
+// whose tracker and message were announced lately waits until the hold ends,
+// and then comes with the others that came meanwhile, unless it has cleared.
+// A tracker that fails for every torrent is so announced once rather than
+// for each torrent, however slowly they report the failure.
+func (a *application) errorEvents(ctx context.Context, w *watcher, fresh, torrents rtapi.Torrents, now time.Time) []event {
+	if len(fresh) > 0 {
+		if err := a.rtorrent.TrackersContext(ctx, fresh); err != nil {
+			a.logger.Printf("[ERROR] trackers of torrents with new errors: %s", err)
+		}
+	}
+	if w.notices == nil {
+		w.notices = make(map[errorKey]*errorNotice)
+	}
+	var due rtapi.Torrents
+	announced := make(map[string]bool)
+	announce := func(torrent *rtapi.Torrent) {
+		if !announced[torrent.Hash] {
+			announced[torrent.Hash] = true
+			due = append(due, torrent)
+		}
+	}
+	for _, torrent := range fresh {
+		// It has cleared since any hold it was waiting in.
+		for _, notice := range w.notices {
+			delete(notice.held, torrent.Hash)
+		}
+		if notice := w.notices[errorKeyOf(torrent)]; notice != nil && now.Before(notice.until) {
+			notice.held[torrent.Hash] = torrent
+			continue
+		}
+		announce(torrent)
+	}
+	// When a hold ends, the errors it held come, unless they have cleared.
+	current := make(map[string]*rtapi.Torrent, len(torrents))
+	for _, torrent := range torrents {
+		current[torrent.Hash] = torrent
+	}
+	for _, key := range slices.SortedFunc(maps.Keys(w.notices), compareErrorKeys) {
+		notice := w.notices[key]
+		if now.Before(notice.until) {
+			continue
+		}
+		waiting := false
+		for _, hash := range slices.Sorted(maps.Keys(notice.held)) {
+			if torrent := current[hash]; torrent != nil && torrent.State == rtapi.Error {
+				torrent.Tracker = notice.held[hash].Tracker
+				announce(torrent)
+				waiting = true
+			}
+		}
+		notice.held = make(map[string]*rtapi.Torrent)
+		if !waiting {
+			delete(w.notices, key) // calm again: the next such error comes at once
+		}
+	}
+	// What is announced now holds back more of the same, longer each time.
+	for _, torrent := range due {
+		key := errorKeyOf(torrent)
+		notice := w.notices[key]
+		if notice == nil {
+			notice = &errorNotice{hold: errorHold}
+			w.notices[key] = notice
+		}
+		if notice.until.After(now) {
+			continue // already renewed for another torrent
+		}
+		notice.until, notice.hold = now.Add(notice.hold), min(2*notice.hold, maxErrorHold)
+		notice.held = make(map[string]*rtapi.Torrent)
+	}
+
+	if len(due) > maxSingleEvents {
+		return []event{{kind: eventErrors, text: fmt.Sprintf("⚠️ Errors: %d torrents", len(due)) + errorGroups(due) +
+			"\n\n/errors lists every torrent with an error."}}
+	}
+	events := make([]event, len(due))
+	for i, torrent := range due {
+		events[i] = event{kind: eventErrors, text: fmt.Sprintf("⚠️ Error: %s\n%s", torrent.Name, torrent.Message), hash: torrent.Hash}
+	}
 	return events
+}
+
+// errorGroups lists errored torrents by tracker and message, a line each
+// starting "\n• ": torrents that share both are counted together, largest
+// group first, up to maxErrorKinds groups.
+func errorGroups(errored rtapi.Torrents) string {
+	groups := make(map[errorKey]rtapi.Torrents)
+	for _, torrent := range errored {
+		key := errorKeyOf(torrent)
+		groups[key] = append(groups[key], torrent)
+	}
+	kinds := slices.SortedFunc(maps.Keys(groups), func(x, y errorKey) int {
+		return cmp.Or(cmp.Compare(len(groups[y]), len(groups[x])), compareErrorKeys(x, y))
+	})
+	var text strings.Builder
+	for _, key := range kinds[:min(len(kinds), maxErrorKinds)] {
+		if torrents := groups[key]; len(torrents) == 1 {
+			fmt.Fprintf(&text, "\n• %s: %s (%s)", key.tracker, key.message, torrents[0].Name)
+		} else {
+			fmt.Fprintf(&text, "\n• %s, %d torrents: %s", key.tracker, len(torrents), key.message)
+		}
+	}
+	if more := len(kinds) - maxErrorKinds; more > 0 {
+		fmt.Fprintf(&text, "\n• and %d other kinds of error", more)
+	}
+	return text.String()
 }
 
 // diskEvents warns once when free space where downloads land drops below
@@ -196,7 +364,7 @@ func (a *application) diskEvents(ctx context.Context, w *watcher, torrents rtapi
 	case free == math.MaxUint64:
 	case free < a.lowDisk && !w.lowDisk:
 		w.lowDisk = true
-		return []event{{eventDisk, fmt.Sprintf("💾 Low disk space: %s free where rTorrent saves data.", formatBytes(free)), ""}}
+		return []event{{kind: eventDisk, text: fmt.Sprintf("💾 Low disk space: %s free where rTorrent saves data.", formatBytes(free))}}
 	case free >= a.lowDisk+a.lowDisk/10:
 		w.lowDisk = false
 	}

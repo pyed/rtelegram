@@ -13,8 +13,6 @@ import (
 )
 
 const (
-	// maxDigestErrors is how many kinds of error a digest lists.
-	maxDigestErrors = 10
 	// trafficSaveInterval is how often the traffic count is saved between
 	// digests; a restart of rtelegram loses at most this much counting.
 	trafficSaveInterval = 10 * time.Minute
@@ -334,8 +332,7 @@ func (a *application) buildDigest(ctx context.Context, now time.Time, settings d
 	return text.String(), counted, nil
 }
 
-// digestErrors lists the errors of torrents by tracker and message, with
-// torrents that share both counted together, largest group first.
+// digestErrors lists the errors of torrents by tracker and message.
 func (a *application) digestErrors(ctx context.Context, errored rtapi.Torrents) string {
 	if len(errored) == 0 {
 		return ""
@@ -343,26 +340,5 @@ func (a *application) digestErrors(ctx context.Context, errored rtapi.Torrents) 
 	if err := a.rtorrent.TrackersContext(ctx, errored); err != nil {
 		a.logger.Printf("[ERROR] digest trackers: %s", err)
 	}
-	type kind struct{ tracker, message string }
-	groups := make(map[kind]rtapi.Torrents)
-	for _, torrent := range errored {
-		key := kind{trackerHost(torrent.Tracker), strings.TrimSpace(torrent.Message)}
-		groups[key] = append(groups[key], torrent)
-	}
-	kinds := slices.SortedFunc(maps.Keys(groups), func(x, y kind) int {
-		return cmp.Or(cmp.Compare(len(groups[y]), len(groups[x])), cmp.Compare(x.tracker, y.tracker), cmp.Compare(x.message, y.message))
-	})
-	var text strings.Builder
-	text.WriteString("\nErrors:")
-	for _, key := range kinds[:min(len(kinds), maxDigestErrors)] {
-		if torrents := groups[key]; len(torrents) == 1 {
-			fmt.Fprintf(&text, "\n• %s: %s (%s)", key.tracker, key.message, torrents[0].Name)
-		} else {
-			fmt.Fprintf(&text, "\n• %s, %d torrents: %s", key.tracker, len(torrents), key.message)
-		}
-	}
-	if more := len(kinds) - maxDigestErrors; more > 0 {
-		fmt.Fprintf(&text, "\n• and %d other kinds of error", more)
-	}
-	return text.String()
+	return "\nErrors:" + errorGroups(errored)
 }
