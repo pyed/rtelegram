@@ -334,3 +334,39 @@ func TestNotificationFlags(t *testing.T) {
 		t.Fatalf("defaults = %v %v %d, %v", cfg.watchInterval, cfg.stallAfter, cfg.lowDisk, err)
 	}
 }
+
+// With no chat subscribed, the watcher does not list torrents; once one
+// subscribes, it is told only of what happens from then on.
+func TestWatcherIdlesWithoutSubscribersAndStartsAfresh(t *testing.T) {
+	seeding := func(name, hash string, finished uint64) *rtapi.Torrent {
+		return &rtapi.Torrent{Name: name, Hash: strings.Repeat(hash, 40), State: rtapi.Seeding, Finished: finished}
+	}
+	app, telegramFake, rtorrentFake := buttonApp(t, rtapi.Torrents{seeding("earlier", "A", 100)})
+	ctx := context.Background()
+	w := &watcher{}
+	subscribe(t, app, 111, eventCompleted, eventErrors)
+	app.checkEvents(ctx, w, time.Now())
+
+	subscribe(t, app, 111) // every notification turned off
+	listed := len(rtorrentFake.called("d.multicall2"))
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.torrents = append(f.torrents, seeding("meanwhile", "B", 200),
+			&rtapi.Torrent{Name: "broken", Hash: strings.Repeat("C", 40), State: rtapi.Error, Message: "Tracker: [Timeout was reached]"})
+	})
+	app.checkEvents(ctx, w, time.Now())
+	app.checkEvents(ctx, w, time.Now())
+	if calls := len(rtorrentFake.called("d.multicall2")); calls != listed {
+		t.Fatalf("listed torrents %d times with nobody subscribed", calls-listed)
+	}
+
+	subscribe(t, app, 111, eventCompleted, eventErrors)
+	app.checkEvents(ctx, w, time.Now())
+	if sent := drain(telegramFake); len(sent) != 0 {
+		t.Fatalf("announced what happened while nobody was subscribed: %q", sent)
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.torrents = append(f.torrents, seeding("later", "D", 300)) })
+	app.checkEvents(ctx, w, time.Now())
+	if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], "Completed: later") {
+		t.Fatalf("after subscribing = %q", sent)
+	}
+}

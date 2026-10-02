@@ -43,6 +43,8 @@ type event struct {
 
 // watcher remembers the previous check, so changes are reported once.
 type watcher struct {
+	// idle is set while no chat is subscribed and checks are skipped.
+	idle      bool
 	started   bool
 	errored   map[string]bool
 	progress  map[string]progressMark
@@ -70,6 +72,18 @@ func (a *application) watchEvents(ctx context.Context) {
 // checkEvents compares rTorrent with the previous check and notifies
 // subscribed chats of what changed.
 func (a *application) checkEvents(ctx context.Context, w *watcher, now time.Time) {
+	// With nobody to tell, skip the check, which lists every torrent. Once a
+	// chat subscribes, look afresh, so it is not told what happened meanwhile.
+	if !a.subscribed() {
+		*w = watcher{idle: true}
+		return
+	}
+	if w.idle {
+		w.idle = false
+		if err := a.state.update(func(data *stateData) { data.CompletedWatermark, data.CompletedAt = 0, nil }); err != nil {
+			a.logger.Printf("[ERROR] saving completed torrents: %s", err)
+		}
+	}
 	torrents, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
 	if err != nil {
 		if ctx.Err() == nil && err.Error() != w.lastError {
@@ -84,6 +98,17 @@ func (a *application) checkEvents(ctx context.Context, w *watcher, now time.Time
 	events = append(events, a.diskEvents(ctx, w, torrents)...)
 	w.started = true
 	a.deliver(ctx, events)
+}
+
+// subscribed reports whether any chat wants notifications.
+func (a *application) subscribed() bool {
+	subscribed := false
+	a.state.read(func(data *stateData) {
+		for _, settings := range data.Notify {
+			subscribed = subscribed || len(settings.Events) > 0
+		}
+	})
+	return subscribed
 }
 
 // completedEvents announces torrents that finished since the watermark kept
