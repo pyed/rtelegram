@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"go/ast"
@@ -106,22 +107,63 @@ func TestREADMEHasTheBotFatherCommandList(t *testing.T) {
 	}
 }
 
-func TestRegisterCommandsFillsOnlyAnEmptyMenu(t *testing.T) {
+// The bot fills an empty command menu and keeps its own up to date, but not
+// a menu set in BotFather.
+func TestRegisterCommandsKeepsItsOwnMenuCurrent(t *testing.T) {
 	telegramFake := &fakeTelegram{}
 	var logs strings.Builder
-	app := &application{bot: newTestBot(t, telegramFake, "123:SECRET"), logger: log.New(&logs, "", 0), token: "123:SECRET"}
-	app.registerCommands(context.Background())
-	var menu []models.BotCommand
-	if err := json.Unmarshal([]byte(telegramFake.commands), &menu); err != nil || len(menu) != len(botCommands) {
-		t.Fatalf("registered %s, %v; log: %s", telegramFake.commands, err, logs.String())
+	app := &application{bot: newTestBot(t, telegramFake, "123:SECRET"), logger: log.New(&logs, "", 0), token: "123:SECRET", state: &state{}}
+	register := func(current string) (menu []models.BotCommand, set bool) {
+		t.Helper()
+		telegramFake.commands, telegramFake.methods = current, nil
+		app.registerCommands(context.Background())
+		if err := json.Unmarshal([]byte(cmp.Or(telegramFake.commands, "[]")), &menu); err != nil {
+			t.Fatalf("menu %s: %v; log: %s", telegramFake.commands, err, logs.String())
+		}
+		return menu, slices.Contains(telegramFake.methods, "setMyCommands")
 	}
-	if menu[0].Command != botCommands[0].name || menu[0].Description != botCommands[0].description {
-		t.Fatalf("first command = %+v", menu[0])
+	menuJSON := func(menu []models.BotCommand) string {
+		encoded, _ := json.Marshal(menu)
+		return string(encoded)
 	}
 
-	telegramFake.commands, telegramFake.methods = `[{"command":"mine","description":"set in BotFather"}]`, nil
-	app.registerCommands(context.Background())
-	if !strings.Contains(telegramFake.commands, "mine") || slices.Contains(telegramFake.methods, "setMyCommands") {
-		t.Fatalf("replaced a menu set in BotFather: %s", telegramFake.commands)
+	menu, set := register("")
+	if !set || len(menu) != len(botCommands) || menu[0].Command != botCommands[0].name || menu[0].Description != botCommands[0].description {
+		t.Fatalf("filled an empty menu with %+v", menu)
+	}
+	app.state.read(func(data *stateData) {
+		if !slices.Equal(data.Menu, commandNames(menu)) {
+			t.Fatalf("remembered registering %v", data.Menu)
+		}
+	})
+	current := menuJSON(menu)
+	if _, set := register(current); set {
+		t.Fatal("replaced a menu that was up to date")
+	}
+
+	// An earlier version's menu, with other descriptions, is brought up to
+	// date, even by a bot that did not yet remember registering it.
+	if err := app.state.update(func(data *stateData) { data.Menu = nil }); err != nil {
+		t.Fatal(err)
+	}
+	outdated := slices.Clone(menu)
+	outdated[0].Description = "an older description"
+	if menu, set := register(menuJSON(outdated)); !set || menuJSON(menu) != current {
+		t.Fatalf("an outdated menu became %+v", menu)
+	}
+	// So is the menu the bot last registered, though this version's commands
+	// differ from it.
+	if err := app.state.update(func(data *stateData) { data.Menu = []string{"list", "help"} }); err != nil {
+		t.Fatal(err)
+	}
+	earlier := `[{"command":"list","description":"List torrents"},{"command":"help","description":"List the commands"}]`
+	if menu, set := register(earlier); !set || menuJSON(menu) != current {
+		t.Fatalf("the menu registered earlier became %+v", menu)
+	}
+
+	for _, own := range []string{`[{"command":"mine","description":"set in BotFather"}]`, earlier} {
+		if menu, set := register(own); set || menuJSON(menu) != own {
+			t.Fatalf("replaced a menu set in BotFather, %s, with %+v", own, menu)
+		}
 	}
 }

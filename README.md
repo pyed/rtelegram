@@ -185,8 +185,9 @@ no other torrent's hash starts with them.
 ### Command menu
 
 When the bot has no command menu, rtelegram registers its commands with
-Telegram as it starts, so typing `/` in a chat lists them. A menu set in
-BotFather is kept. To set it yourself, send `/setcommands` to
+Telegram as it starts, so typing `/` in a chat lists them, and it keeps that
+menu up to date as new versions change the commands. A menu with other
+commands, set in BotFather, is kept. To set it yourself, send `/setcommands` to
 [@BotFather](https://t.me/BotFather), choose the bot, and paste:
 
 ```text

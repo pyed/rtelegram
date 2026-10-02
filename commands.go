@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,25 +80,44 @@ func botFatherCommands() string {
 	return text.String()
 }
 
-// registerCommands gives the bot its command menu when it has none, so that
-// typing / in Telegram offers the commands. A menu set in BotFather is kept.
+// registerCommands gives the bot its command menu, so that typing / in
+// Telegram offers the commands, when it has none, and keeps rtelegram's own
+// menu up to date: one with the commands this version has, or those the bot
+// last registered, as an earlier version did. A menu with other commands,
+// set in BotFather, is kept.
 func (a *application) registerCommands(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	current, err := a.bot.GetMyCommands(ctx, &telegram.GetMyCommandsParams{})
-	if err == nil && len(current) > 0 {
-		return
-	}
-	if err == nil {
-		menu := make([]models.BotCommand, len(botCommands))
-		for i, command := range botCommands {
-			menu[i] = models.BotCommand{Command: command.name, Description: command.description}
-		}
-		_, err = a.bot.SetMyCommands(ctx, &telegram.SetMyCommandsParams{Commands: menu})
-	}
 	if err != nil {
 		a.logger.Printf("[WARN] Could not set the command menu: %s", redact(a.token, err.Error()))
 		return
 	}
+	menu := make([]models.BotCommand, len(botCommands))
+	for i, command := range botCommands {
+		menu[i] = models.BotCommand{Command: command.name, Description: command.description}
+	}
+	var registered []string
+	a.state.read(func(data *stateData) { registered = data.Menu })
+	names := commandNames(current)
+	ours := len(current) == 0 || slices.Equal(names, commandNames(menu)) || slices.Equal(names, registered)
+	if !ours || slices.Equal(current, menu) {
+		return
+	}
+	if _, err := a.bot.SetMyCommands(ctx, &telegram.SetMyCommandsParams{Commands: menu}); err != nil {
+		a.logger.Printf("[WARN] Could not set the command menu: %s", redact(a.token, err.Error()))
+		return
+	}
+	if err := a.state.update(func(data *stateData) { data.Menu = commandNames(menu) }); err != nil {
+		a.logger.Printf("[ERROR] Saving the command menu: %s", err)
+	}
 	a.logger.Printf("[INFO] Registered the command menu with Telegram")
+}
+
+func commandNames(menu []models.BotCommand) []string {
+	names := make([]string, len(menu))
+	for i, command := range menu {
+		names[i] = command.Command
+	}
+	return names
 }

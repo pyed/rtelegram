@@ -33,6 +33,9 @@ type stateData struct {
 	Digest map[int64]digestSettings `json:"digest,omitempty"`
 	// Traffic counts what rTorrent transfers, for digests.
 	Traffic *traffic `json:"traffic,omitempty"`
+	// Menu is the commands of the menu the bot last registered, so that it
+	// can tell its own menu from one set in BotFather.
+	Menu []string `json:"menu,omitempty"`
 }
 
 type notifySettings struct {
