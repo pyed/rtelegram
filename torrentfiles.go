@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,12 +18,23 @@ import (
 
 const (
 	filesPageSize = 10
+	// filesPerRow is how many file buttons share a row.
+	filesPerRow = 5
 	// maxUploadSize is Telegram's limit on files a bot sends.
 	maxUploadSize = 50_000_000
 )
 
-var priorityNames = map[rtapi.FilePriority]string{rtapi.FileSkip: "skip", rtapi.FileNormal: "normal", rtapi.FileHigh: "high"}
-var priorityMarks = map[rtapi.FilePriority]string{rtapi.FileSkip: "⬜ ", rtapi.FileNormal: "✅ ", rtapi.FileHigh: "⭐ "}
+var priorityNames = map[rtapi.FilePriority]string{rtapi.FileSkip: "skip", rtapi.FileNormal: "download", rtapi.FileHigh: "download first"}
+var priorityMarks = map[rtapi.FilePriority]string{rtapi.FileSkip: "⬜", rtapi.FileNormal: "✅", rtapi.FileHigh: "⭐"}
+
+// priorityChoice is a priority a file's card offers, with the name its
+// button sends.
+type priorityChoice struct {
+	name, label string
+	priority    rtapi.FilePriority
+}
+
+var priorityChoices = []priorityChoice{{"skip", "⬜ Skip", rtapi.FileSkip}, {"normal", "✅ Download", rtapi.FileNormal}, {"high", "⭐ First", rtapi.FileHigh}}
 
 func filePercent(file rtapi.File) string {
 	if file.Chunks == 0 {
@@ -36,31 +48,72 @@ func (a *application) canSend(file rtapi.File) bool {
 	return a.dataRoot != "" && file.Complete() && file.Size <= maxUploadSize
 }
 
-// renderFiles renders a page of a torrent's files with a button per file that
-// cycles its priority, and a 📥 button for files that can be sent.
-func (a *application) renderFiles(torrent *rtapi.Torrent, files []rtapi.File, page int, back bool) (string, *models.InlineKeyboardMarkup, int) {
+// fileMatches returns the files whose paths contain every word of filter,
+// ignoring case, or all of them for an empty filter.
+func fileMatches(files []rtapi.File, filter string) []rtapi.File {
+	words := strings.Fields(strings.ToLower(filter))
+	if len(words) == 0 {
+		return files
+	}
+	var matches []rtapi.File
+	for _, file := range files {
+		name := strings.ToLower(file.Path)
+		if !slices.ContainsFunc(words, func(word string) bool { return !strings.Contains(name, word) }) {
+			matches = append(matches, file)
+		}
+	}
+	return matches
+}
+
+// renderFiles renders a page of a torrent's files, or of those matching
+// filter. The text describes each file, and a numbered button per file opens
+// its card, so the rows stay even however long the names are.
+func (a *application) renderFiles(torrent *rtapi.Torrent, files []rtapi.File, filter string, page int, back bool) (string, *models.InlineKeyboardMarkup, int) {
 	var text strings.Builder
 	var rows [][]models.InlineKeyboardButton
-	pages := max(1, (len(files)+filesPageSize-1)/filesPageSize)
+	matches := fileMatches(files, filter)
+	pages := max(1, (len(matches)+filesPageSize-1)/filesPageSize)
 	page = min(max(page, 0), pages-1)
 	fmt.Fprintf(&text, "%s\n", torrent.Name)
 	if len(files) == 0 {
 		text.WriteString("No files yet; rTorrent is still fetching the torrent's metadata.")
 	} else {
-		fmt.Fprintf(&text, "%d files. Tap one to cycle skip, normal, high.\n", len(files))
-	}
-	for _, file := range files[page*filesPageSize : min(len(files), (page+1)*filesPageSize)] {
-		fmt.Fprintf(&text, "\n%d. %s\n%s, %s, %s", file.Index+1, file.Path,
-			formatBytes(file.Size), filePercent(file), priorityNames[file.Priority])
-		row := []models.InlineKeyboardButton{button(priorityMarks[file.Priority]+buttonName(path.Base(file.Path)), "fp:"+strconv.Itoa(file.Index))}
-		if a.canSend(file) {
-			row = append(row, button("📥", "fg:"+strconv.Itoa(file.Index)))
+		var size, wanted uint64
+		selected := 0
+		for _, file := range files {
+			size += file.Size
+			if file.Priority != rtapi.FileSkip {
+				selected++
+				wanted += file.Size
+			}
 		}
+		fmt.Fprintf(&text, "%d files, %s; downloading %d of them, %s.", len(files), formatBytes(size), selected, formatBytes(wanted))
+		if filter != "" {
+			fmt.Fprintf(&text, " %d match %q.", len(matches), filter)
+		}
+		if len(matches) > 0 {
+			text.WriteString("\nTap a number to skip, prioritize, or send that file.\n")
+		}
+	}
+	var row []models.InlineKeyboardButton
+	for _, file := range matches[page*filesPageSize : min(len(matches), (page+1)*filesPageSize)] {
+		fmt.Fprintf(&text, "\n%d. %s %s\n%s · %s", file.Index+1, priorityMarks[file.Priority], file.Path, formatBytes(file.Size), filePercent(file))
+		if a.canSend(file) {
+			text.WriteString(" · 📥")
+		}
+		row = append(row, button(priorityMarks[file.Priority]+" "+strconv.Itoa(file.Index+1), "fo:"+strconv.Itoa(file.Index)))
+		if len(row) == filesPerRow {
+			rows, row = append(rows, row), nil
+		}
+	}
+	if len(row) > 0 {
 		rows = append(rows, row)
 	}
 	if pages > 1 {
-		fmt.Fprintf(&text, "\n\nPage %d of %d", page+1, pages)
 		var nav []models.InlineKeyboardButton
+		if page > 1 {
+			nav = append(nav, button("⏮", "pg:0"))
+		}
 		if page > 0 {
 			nav = append(nav, button("◀", "pg:"+strconv.Itoa(page-1)))
 		}
@@ -68,10 +121,17 @@ func (a *application) renderFiles(torrent *rtapi.Torrent, files []rtapi.File, pa
 		if page < pages-1 {
 			nav = append(nav, button("▶", "pg:"+strconv.Itoa(page+1)))
 		}
+		if page < pages-2 {
+			nav = append(nav, button("⏭", "pg:"+strconv.Itoa(pages-1)))
+		}
 		rows = append(rows, nav)
 	}
-	if len(files) > 0 {
-		rows = append(rows, []models.InlineKeyboardButton{button("⬜ Skip all", "fp:skip"), button("✅ Download all", "fp:normal")})
+	if len(matches) > 0 {
+		skip, download := "⬜ Skip all", "✅ Download all"
+		if filter != "" {
+			skip, download = "⬜ Skip these", "✅ Download these"
+		}
+		rows = append(rows, []models.InlineKeyboardButton{button(skip, "fp:skip"), button(download, "fp:normal")})
 	}
 	if back {
 		rows = append(rows, []models.InlineKeyboardButton{button("« Back", "back")})
@@ -79,13 +139,43 @@ func (a *application) renderFiles(torrent *rtapi.Torrent, files []rtapi.File, pa
 	return text.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}, page
 }
 
-// files answers /files HASH with the torrent's files.
-func (a *application) files(ctx context.Context, chatID int64, references []string) {
-	if len(references) != 1 {
-		a.send(ctx, chatID, "files: use files HASH")
+// renderFile renders one file's card: what it is, buttons that choose its
+// priority, and a 📥 button when it can be sent, or why it cannot.
+func (a *application) renderFile(torrent *rtapi.Torrent, file rtapi.File, count int) (string, *models.InlineKeyboardMarkup) {
+	var text strings.Builder
+	fmt.Fprintf(&text, "%s\nFile %d of %d in %s\n%s · %s done\nPriority: %s %s",
+		file.Path, file.Index+1, count, torrent.Name, formatBytes(file.Size), filePercent(file), priorityMarks[file.Priority], priorityNames[file.Priority])
+	var choices []models.InlineKeyboardButton
+	for _, choice := range priorityChoices {
+		label := choice.label
+		if choice.priority == file.Priority {
+			label = "• " + label
+		}
+		choices = append(choices, button(label, "fp:"+strconv.Itoa(file.Index)+":"+choice.name))
+	}
+	rows := [][]models.InlineKeyboardButton{choices}
+	switch {
+	case a.canSend(file):
+		rows = append(rows, []models.InlineKeyboardButton{button("📥 Send", "fg:"+strconv.Itoa(file.Index))})
+	case a.dataRoot == "":
+		text.WriteString("\nSending files is off; see -data-root.")
+	case !file.Complete():
+		text.WriteString("\nIt can be sent once it has downloaded.")
+	default:
+		text.WriteString("\nIt is too large to send: Telegram lets bots send up to 50 MB.")
+	}
+	rows = append(rows, []models.InlineKeyboardButton{button("« Files", "fl")})
+	return text.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// files answers /files HASH [WORDS] with the torrent's files, or those whose
+// paths contain every word.
+func (a *application) files(ctx context.Context, chatID int64, arguments []string) {
+	if len(arguments) == 0 {
+		a.send(ctx, chatID, "files: use files HASH [WORDS]")
 		return
 	}
-	torrents, err := a.selected(ctx, chatID, references, false)
+	torrents, err := a.selected(ctx, chatID, arguments[:1], false)
 	if err != nil {
 		a.send(ctx, chatID, "files: "+err.Error())
 		return
@@ -96,11 +186,13 @@ func (a *application) files(ctx context.Context, chatID int64, references []stri
 		a.send(ctx, chatID, "files: "+err.Error())
 		return
 	}
-	text, keyboard, page := a.renderFiles(torrent, files, 0, false)
-	a.sendScreen(ctx, chatID, text, keyboard, &screen{files: torrent.Hash, page: page})
+	filter := strings.Join(arguments[1:], " ")
+	text, keyboard, page := a.renderFiles(torrent, files, filter, 0, false)
+	a.sendScreen(ctx, chatID, text, keyboard, &screen{files: torrent.Hash, filter: filter, page: page})
 }
 
-// redrawFiles shows a page of a torrent's files in an existing message.
+// redrawFiles shows a torrent's files in an existing message: the card of
+// the file scr.file names, or else a page of the list.
 func (a *application) redrawFiles(ctx context.Context, key screenKey, scr *screen, toast string) (string, bool) {
 	torrent, err := a.rtorrent.GetTorrentContext(ctx, scr.files)
 	if err != nil {
@@ -110,17 +202,24 @@ func (a *application) redrawFiles(ctx context.Context, key screenKey, scr *scree
 	if err != nil {
 		return err.Error(), true
 	}
-	text, keyboard, page := a.renderFiles(torrent, files, scr.page, scr.parent != nil)
+	next := *scr
+	var text string
+	var keyboard *models.InlineKeyboardMarkup
+	if index := scr.file - 1; index >= 0 && index < len(files) {
+		text, keyboard = a.renderFile(torrent, files[index], len(files))
+	} else {
+		next.file = 0
+		text, keyboard, next.page = a.renderFiles(torrent, files, scr.filter, scr.page, scr.parent != nil)
+	}
 	if err := a.editScreen(ctx, key, text, keyboard); err != nil {
 		return err.Error(), true
 	}
-	next := *scr
-	next.page = page
 	a.screens.put(key, &next)
 	return toast, false
 }
 
-// pressFilePriority cycles one file's priority, or sets every file's.
+// pressFilePriority sets one file's priority, from its card, or that of
+// every file the list shows.
 func (a *application) pressFilePriority(ctx context.Context, key screenKey, scr *screen, choice string) (string, bool) {
 	files, err := a.rtorrent.FilesContext(ctx, scr.files)
 	if err != nil {
@@ -130,18 +229,21 @@ func (a *application) pressFilePriority(ctx context.Context, key screenKey, scr 
 	var toast string
 	switch choice {
 	case "skip", "normal":
-		for _, file := range files {
-			priorities[file.Index] = map[string]rtapi.FilePriority{"skip": rtapi.FileSkip, "normal": rtapi.FileNormal}[choice]
+		priority := map[string]rtapi.FilePriority{"skip": rtapi.FileSkip, "normal": rtapi.FileNormal}[choice]
+		matches := fileMatches(files, scr.filter)
+		for _, file := range matches {
+			priorities[file.Index] = priority
 		}
-		toast = "Every file: " + choice
+		toast = fmt.Sprintf("%d files: %s", len(matches), priorityNames[priority])
 	default:
-		index, err := strconv.Atoi(choice)
-		if err != nil || index < 0 || index >= len(files) {
+		indexText, name, _ := strings.Cut(choice, ":")
+		index, err := strconv.Atoi(indexText)
+		chosen := slices.IndexFunc(priorityChoices, func(c priorityChoice) bool { return c.name == name })
+		if err != nil || index < 0 || index >= len(files) || chosen < 0 {
 			return "This button no longer applies.", true
 		}
-		next := (files[index].Priority + 1) % 3
-		priorities[index] = next
-		toast = path.Base(files[index].Path) + ": " + priorityNames[next]
+		priorities[index] = priorityChoices[chosen].priority
+		toast = path.Base(files[index].Path) + ": " + priorityNames[priorityChoices[chosen].priority]
 	}
 	if err := a.rtorrent.SetFilePrioritiesContext(ctx, scr.files, priorities); err != nil {
 		return err.Error(), true
@@ -177,8 +279,8 @@ func (a *application) get(ctx context.Context, chatID int64, arguments []string)
 		}
 		index = number - 1
 	case len(files) != 1:
-		text, keyboard, page := a.renderFiles(torrent, files, 0, false)
-		a.sendScreen(ctx, chatID, "Choose a file with 📥.\n\n"+text, keyboard, &screen{files: torrent.Hash, page: page})
+		text, keyboard, page := a.renderFiles(torrent, files, "", 0, false)
+		a.sendScreen(ctx, chatID, "Files marked 📥 can be sent.\n\n"+text, keyboard, &screen{files: torrent.Hash, page: page})
 		return
 	}
 	if err := a.upload(ctx, chatID, torrent, files[index]); err != nil {

@@ -40,6 +40,8 @@ type screen struct {
 	parent  *screen        // the list page a card was opened from
 	notify  bool           // the /notify settings
 	files   string         // the torrent whose files are shown
+	filter  string         // the words the files shown contain
+	file    int            // the file whose card is shown, plus one; 0 for the list
 	limits  bool           // the /limit presets
 	results []searchResult // /find results
 }
@@ -320,7 +322,7 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 		page, _ := strconv.Atoi(arg)
 		if scr.files != "" {
 			next := *scr
-			next.page = page
+			next.page, next.file = page, 0
 			return a.redrawFiles(ctx, key, &next, "")
 		}
 		if scr.list == nil {
@@ -354,6 +356,21 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 		}
 		card := *scr
 		return a.redrawFiles(ctx, key, &screen{files: scr.hash, parent: &card}, "")
+	case "fo":
+		index, err := strconv.Atoi(arg)
+		if scr.files == "" || err != nil {
+			break
+		}
+		next := *scr
+		next.file = index + 1
+		return a.redrawFiles(ctx, key, &next, "")
+	case "fl":
+		if scr.files == "" {
+			break
+		}
+		next := *scr
+		next.file = 0
+		return a.redrawFiles(ctx, key, &next, "")
 	case "fp":
 		if scr.files == "" {
 			break

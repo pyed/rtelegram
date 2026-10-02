@@ -167,7 +167,7 @@ no other torrent's hash starts with them.
 | `latest [n]` | `la` | List the n most recently added torrents |
 | `add URL...` | `ad` | Add torrents from URLs or magnet links, and confirm rTorrent loaded them |
 | `info HASH...` | `in` | Show each torrent's card |
-| `files HASH` | `fi` | List a torrent's files, and skip or prioritize them |
+| `files HASH [WORDS]` | `fi` | List a torrent's files, or those matching WORDS, to skip, prioritize, or send |
 | `get HASH [N]` | | Send a torrent's finished file, up to 50 MB (see `-data-root`) |
 | `start`, `stop`, `check` `HASH...\|all` | `st`, `sp`, `ck` | Start, stop, or verify torrents |
 | `del HASH...` | | Remove torrents from rTorrent and keep their data |
@@ -205,7 +205,7 @@ info - Show torrents' cards with buttons: info HASH...
 add - Add torrents from links or magnets: add LINK...
 find - Search the indexer and add a result: find WORDS
 watch - Add new releases automatically: watch add NAME WORDS, watch del NAME
-files - Skip or prioritize a torrent's files: files HASH
+files - Skip, prioritize, or send a torrent's files: files HASH [WORDS]
 get - Send a finished file: get HASH [N]
 start - Start torrents: start HASH... or start all
 stop - Stop torrents: stop HASH... or stop all
@@ -251,17 +251,22 @@ how fast the bot may send, the bot waits as long as Telegram asks and retries.
 
 ## Files
 
-`/files HASH`, or 📂 Files on a torrent's card, lists the torrent's files with
-their size, progress, and priority. Tap a file to cycle it between skip,
-normal, and high; ⬜ Skip all and ✅ Download all change every file at once.
-Skipping files before they download is how to take only some episodes from a
-season pack.
+`/files HASH`, or 📂 Files on a torrent's card, lists the torrent's files, ten
+to a page, with their size and progress, and a numbered button for each: ✅
+downloads, ⭐ downloads first, ⬜ is skipped. Tap a number to open that file,
+choose ⬜ Skip, ✅ Download, or ⭐ First, and send it if it can be sent.
+⬜ Skip all and ✅ Download all change every file at once, and ⏮ ⏭ jump to the
+first and last pages.
+
+`/files HASH WORDS` lists only the files whose paths contain every word, and
+its buttons become ⬜ Skip these and ✅ Download these. To take a few files from
+a large pack, tap ⬜ Skip all, then `/files HASH golf` and ✅ Download these.
 
 When rtelegram can reach rTorrent's data (see `-data-root`), finished files up
-to 50 MB (Telegram's limit for bots) get a 📥 button that
-sends the file to the chat, and `/get HASH N` sends file N. A single-file
-torrent needs no N. Files are read only from inside `-data-root`, and symbolic
-links cannot lead outside it.
+to 50 MB (Telegram's limit for bots) are marked 📥, and their cards have a
+📥 Send button. `/get HASH N` sends file N directly; a single-file torrent
+needs no N. Files are read only from inside `-data-root`, and symbolic links
+cannot lead outside it.
 
 ## Find and watch
 

@@ -33,7 +33,7 @@ var botCommands = []botCommand{
 	{"add", "ad", "Add torrents from links or magnets: add LINK..."},
 	{"find", "", "Search the indexer and add a result: find WORDS"},
 	{"watch", "", "Add new releases automatically: watch add NAME WORDS, watch del NAME"},
-	{"files", "fi", "Skip or prioritize a torrent's files: files HASH"},
+	{"files", "fi", "Skip, prioritize, or send a torrent's files: files HASH [WORDS]"},
 	{"get", "", "Send a finished file: get HASH [N]"},
 	{"start", "st", "Start torrents: start HASH... or start all"},
 	{"stop", "sp", "Stop torrents: stop HASH... or stop all"},

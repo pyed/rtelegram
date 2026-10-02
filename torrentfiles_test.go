@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,7 +40,7 @@ func fileApp(t *testing.T, dataRoot string, torrent *rtapi.Torrent, files []rtap
 	return app, telegramFake, rtorrentFake
 }
 
-func TestFilesScreenCyclesPriorities(t *testing.T) {
+func TestFilesListOpensFileCards(t *testing.T) {
 	torrent, files := showTorrent(t, t.TempDir())
 	app, telegramFake, rtorrentFake := fileApp(t, "", torrent, files)
 	priority := func(index int) rtapi.FilePriority {
@@ -49,31 +50,117 @@ func TestFilesScreenCyclesPriorities(t *testing.T) {
 	}
 
 	command(app, "files aaaaaaa")
-	screen := nextSent(t, telegramFake)
-	if !strings.Contains(screen.text, "show\n3 files.") || !strings.Contains(screen.text, "2. Extras/sample.mkv\n3 B, 50%, normal") {
-		t.Fatalf("files screen = %q", screen.text)
+	list := nextSent(t, telegramFake)
+	if !strings.HasPrefix(list.text, "show\n3 files, 57.2 MiB; downloading 3 of them, 57.2 MiB.") ||
+		!strings.Contains(list.text, "\n2. ✅ Extras/sample.mkv\n3 B · 50%") {
+		t.Fatalf("files list = %q", list.text)
 	}
-	if !hasButton(screen.buttons, "✅ e01.mkv") || !hasButton(screen.buttons, "✅ sample.mkv") || hasButton(screen.buttons, "📥") {
-		t.Fatalf("files buttons = %v", buttonTexts(screen.buttons))
+	// One numbered button per file, however long the names: rows stay even.
+	if got := buttonTexts(list.buttons); strings.Join(got, ",") != "✅ 1=fo:0,✅ 2=fo:1,✅ 3=fo:2,⬜ Skip all=fp:skip,✅ Download all=fp:normal" {
+		t.Fatalf("files buttons = %v", got)
 	}
 
-	press(app, master, screen.messageID, "fp:0")
-	if priority(0) != rtapi.FileHigh || lastAnswer(t, telegramFake).text != "e01.mkv: high" || !hasButton(lastEdit(t, telegramFake).buttons, "⭐ e01.mkv") {
-		t.Fatalf("after one press: priority %d, %+v", priority(0), lastAnswer(t, telegramFake))
+	press(app, master, list.messageID, "fo:1")
+	card := lastEdit(t, telegramFake)
+	if !strings.HasPrefix(card.text, "Extras/sample.mkv\nFile 2 of 3 in show\n3 B · 50% done\nPriority: ✅ download") ||
+		!strings.Contains(card.text, "Sending files is off") || hasButton(card.buttons, "📥 Send") {
+		t.Fatalf("file card = %q %v", card.text, buttonTexts(card.buttons))
 	}
-	press(app, master, screen.messageID, "fp:0")
-	if priority(0) != rtapi.FileSkip {
-		t.Fatalf("after two presses: priority %d", priority(0))
+	if !hasButton(card.buttons, "• ✅ Download") || !hasButton(card.buttons, "⬜ Skip") || !hasButton(card.buttons, "« Files") {
+		t.Fatalf("file card buttons = %v", buttonTexts(card.buttons))
 	}
-	press(app, master, screen.messageID, "fp:skip")
-	press(app, master, screen.messageID, "fp:normal")
+
+	press(app, master, list.messageID, "fp:1:high")
+	if priority(1) != rtapi.FileHigh || lastAnswer(t, telegramFake).text != "sample.mkv: download first" ||
+		!hasButton(lastEdit(t, telegramFake).buttons, "• ⭐ First") {
+		t.Fatalf("after First: priority %d, %+v", priority(1), lastAnswer(t, telegramFake))
+	}
+	press(app, master, list.messageID, "fp:1:skip")
+	if priority(1) != rtapi.FileSkip {
+		t.Fatalf("after Skip: priority %d", priority(1))
+	}
+	press(app, master, list.messageID, "fp:1:loud")
+	if priority(1) != rtapi.FileSkip || lastAnswer(t, telegramFake).text != "This button no longer applies." {
+		t.Fatalf("an unknown priority was applied: %d", priority(1))
+	}
+
+	press(app, master, list.messageID, "fl")
+	back := lastEdit(t, telegramFake)
+	if !strings.Contains(back.text, "downloading 2 of them") || !hasButton(back.buttons, "⬜ 2") {
+		t.Fatalf("back to the list = %q %v", back.text, buttonTexts(back.buttons))
+	}
+	press(app, master, list.messageID, "fp:normal")
 	for index := range files {
 		if priority(index) != rtapi.FileNormal {
 			t.Fatalf("file %d priority %d after Download all", index, priority(index))
 		}
 	}
-	if len(rtorrentFake.called("d.update_priorities")) != 4 {
-		t.Fatalf("priorities applied %d times", len(rtorrentFake.called("d.update_priorities")))
+	if lastAnswer(t, telegramFake).text != "3 files: download" {
+		t.Fatalf("answer = %+v", lastAnswer(t, telegramFake))
+	}
+}
+
+func TestFilesFilterNarrowsTheListAndBulkChoices(t *testing.T) {
+	torrent, files := showTorrent(t, t.TempDir())
+	app, telegramFake, rtorrentFake := fileApp(t, "", torrent, files)
+
+	command(app, "files aaaaaaa MKV extras")
+	list := nextSent(t, telegramFake)
+	if !strings.Contains(list.text, `1 match "MKV extras".`) || strings.Contains(list.text, "e01.mkv") ||
+		!hasButton(list.buttons, "⬜ Skip these") || !hasButton(list.buttons, "✅ 2") || hasButton(list.buttons, "✅ 1") {
+		t.Fatalf("filtered list = %q %v", list.text, buttonTexts(list.buttons))
+	}
+	press(app, master, list.messageID, "fp:skip")
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		for _, file := range f.files[torrent.Hash] {
+			if want := file.Path == "Extras/sample.mkv"; (file.Priority == rtapi.FileSkip) != want {
+				t.Errorf("%s priority %d after Skip these", file.Path, file.Priority)
+			}
+		}
+	})
+
+	command(app, "files aaaaaaa nothing")
+	if none := nextSent(t, telegramFake); !strings.Contains(none.text, `0 match "nothing".`) || hasButton(none.buttons, "⬜ Skip these") {
+		t.Fatalf("no matches = %q %v", none.text, buttonTexts(none.buttons))
+	}
+}
+
+func TestFilesPagesJumpToTheEnds(t *testing.T) {
+	torrent := &rtapi.Torrent{Name: "pack", Hash: strings.Repeat("A", 40), State: rtapi.Seeding, MultiFile: true}
+	files := make([]rtapi.File, 45)
+	for i := range files {
+		files[i] = rtapi.File{Index: i, Path: fmt.Sprintf("file %02d.pkg", i+1), Size: 1, Chunks: 1, Priority: rtapi.FileNormal}
+	}
+	app, telegramFake, _ := fileApp(t, "", torrent, files)
+	command(app, "files aaaaaaa")
+	list := nextSent(t, telegramFake)
+	if got := buttonTexts(list.buttons[2:3]); strings.Join(got, ",") != "1/5=noop,▶=pg:1,⏭=pg:4" {
+		t.Fatalf("first page navigation = %v", got)
+	}
+	if len(list.buttons[0]) != filesPerRow || len(list.buttons[1]) != filesPerRow {
+		t.Fatalf("file button rows = %v", buttonTexts(list.buttons))
+	}
+	// ⏮ and ⏭ appear only where ◀ and ▶ do not already reach the ends.
+	for page, want := range map[string]string{
+		"1": "◀=pg:0,2/5=noop,▶=pg:2,⏭=pg:4",
+		"3": "⏮=pg:0,◀=pg:2,4/5=noop,▶=pg:4",
+	} {
+		press(app, master, list.messageID, "pg:"+page)
+		if got := buttonTexts(lastEdit(t, telegramFake).buttons[2:3]); strings.Join(got, ",") != want {
+			t.Errorf("page %s navigation = %v, want %s", page, got, want)
+		}
+	}
+	press(app, master, list.messageID, "pg:4")
+	last := lastEdit(t, telegramFake)
+	if got := buttonTexts(last.buttons[1:2]); strings.Join(got, ",") != "⏮=pg:0,◀=pg:3,5/5=noop" || !strings.Contains(last.text, "45. ✅ file 45.pkg") {
+		t.Fatalf("last page = %q %v", last.text, got)
+	}
+	// A page button pressed as a card opens, as with a quick second tap,
+	// shows that page of the list.
+	press(app, master, list.messageID, "fo:44")
+	press(app, master, list.messageID, "pg:0")
+	if first := lastEdit(t, telegramFake); !strings.Contains(first.text, "1. ✅ file 01.pkg") {
+		t.Fatalf("page press on a card = %q", first.text)
 	}
 }
 
@@ -84,7 +171,7 @@ func TestCardOpensFilesAndGoesBack(t *testing.T) {
 	card := nextSent(t, telegramFake)
 
 	press(app, master, card.messageID, "files")
-	if shown := lastEdit(t, telegramFake); !strings.Contains(shown.text, "1. e01.mkv") || !hasButton(shown.buttons, "« Back") {
+	if shown := lastEdit(t, telegramFake); !strings.Contains(shown.text, "1. ✅ e01.mkv") || !hasButton(shown.buttons, "« Back") {
 		t.Fatalf("files from card = %q %v", shown.text, buttonTexts(shown.buttons))
 	}
 	press(app, master, card.messageID, "back")
@@ -115,11 +202,19 @@ func TestGetSendsFinishedFilesInsideTheDataRoot(t *testing.T) {
 
 	command(app, "get aaaaaaa")
 	choose := nextSent(t, telegramFake)
-	if !strings.HasPrefix(choose.text, "Choose a file with 📥.") || !hasButton(choose.buttons, "📥") {
-		t.Fatalf("choice = %q %v", choose.text, buttonTexts(choose.buttons))
+	if !strings.HasPrefix(choose.text, "Files marked 📥 can be sent.") || strings.Count(choose.text, "📥") != 2 ||
+		!strings.Contains(choose.text, "11 B · 100% · 📥") {
+		t.Fatalf("choice = %q", choose.text)
 	}
-	if strings.Count(strings.Join(buttonTexts(choose.buttons), " "), "📥") != 1 {
-		t.Fatalf("📥 offered for files that cannot be sent: %v", buttonTexts(choose.buttons))
+	for index, want := range map[string]string{"1": "It can be sent once it has downloaded.", "2": "It is too large to send"} {
+		press(app, master, choose.messageID, "fo:"+index)
+		if card := lastEdit(t, telegramFake); !strings.Contains(card.text, want) || hasButton(card.buttons, "📥 Send") {
+			t.Errorf("card of file %s = %q %v", index, card.text, buttonTexts(card.buttons))
+		}
+	}
+	press(app, master, choose.messageID, "fo:0")
+	if card := lastEdit(t, telegramFake); !hasButton(card.buttons, "📥 Send") {
+		t.Fatalf("finished file's card = %q %v", card.text, buttonTexts(card.buttons))
 	}
 	press(app, master, choose.messageID, "fg:0")
 	if len(telegramFake.documents) != 2 || lastAnswer(t, telegramFake).text != "Sent e01.mkv" {
