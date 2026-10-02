@@ -233,25 +233,23 @@ func (a *application) sendScreen(ctx context.Context, chatID int64, text string,
 		_, err := a.send(ctx, chatID, text)
 		return err
 	}
-	messageThreadID, _ := ctx.Value(messageThreadIDKey{}).(int)
-	params := &telegram.SendMessageParams{
-		ChatID:             chatID,
-		MessageThreadID:    messageThreadID,
-		Text:               text,
-		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: telegram.True()},
-	}
-	if keyboard != nil {
-		params.ReplyMarkup = keyboard
-	}
 	var message *models.Message
-	err := a.retryRateLimited(ctx, func() (err error) {
+	chatID, err := a.post(ctx, chatID, func(chatID int64, thread int) (err error) {
+		params := &telegram.SendMessageParams{
+			ChatID:             chatID,
+			MessageThreadID:    thread,
+			Text:               text,
+			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: telegram.True()},
+		}
+		if keyboard != nil {
+			params.ReplyMarkup = keyboard
+		}
 		message, err = a.bot.SendMessage(ctx, params)
 		return err
 	})
 	if err != nil {
-		clean := redact(a.token, err.Error())
-		a.logger.Printf("[ERROR] Send: %s", clean)
-		return errors.New(clean)
+		a.logger.Printf("[ERROR] Send: %s", err)
+		return err
 	}
 	a.screens.put(screenKey{chatID, message.ID}, scr)
 	return nil

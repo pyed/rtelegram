@@ -322,7 +322,10 @@ fails for every torrent makes one message, not one per torrent.
 The bot checks rTorrent itself every `-watch-interval`, so nothing needs to be
 added to `rtorrent.rc`. Torrents that finish while the bot is offline are
 announced when it starts again. Subscriptions are kept in the `-state` file. A
-chat that blocks or removes the bot is unsubscribed.
+chat that blocks or removes the bot, or no longer exists, is unsubscribed.
+When a group becomes a supergroup, which changes its ID, its notifications,
+digest, and watch rules follow it, and when their forum topic is deleted, they
+go to the group itself.
 
 ## Daily digest
 
@@ -355,7 +358,8 @@ between digests, which resets the totals rTorrent reports. `/digest now` shows
 the digest so far without resetting it, `/digest off` stops it, and `/digest`
 shows when it comes. A digest missed while the bot was offline comes as soon
 as it is back, once, and in a group it goes to the topic `/digest` was sent
-from.
+from. A digest Telegram refuses, as when the bot lacks the right to post in a
+group, is not retried; the next one covers its time too.
 
 ## Deleting data
 

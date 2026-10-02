@@ -409,7 +409,7 @@ func (a *application) deliver(ctx context.Context, events []event) {
 				details := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{button("ℹ Details", "t:"+e.hash)}}}
 				err = a.sendScreen(chatCtx, chatID, e.text, details, &screen{})
 			}
-			if err != nil && strings.Contains(strings.ToLower(err.Error()), "forbidden") {
+			if err != nil && chatGone(err) {
 				a.logger.Printf("[INFO] stopped notifying chat %d: %s", chatID, err)
 				a.state.update(func(data *stateData) { delete(data.Notify, chatID) })
 				break

@@ -333,6 +333,12 @@ type fakeTelegram struct {
 	answers      []callbackAnswer
 	forbidden    map[int64]bool // chats that have blocked the bot
 	commands     string         // the command menu, as JSON
+	// migrated maps groups that have become supergroups to their new IDs.
+	migrated map[int64]int64
+	// goneTopics are forum topics that no longer exist.
+	goneTopics map[int]bool
+	// refused maps chats to the Bad Request description sends to them get.
+	refused map[int64]string
 }
 
 type sentMessage struct {
@@ -387,10 +393,18 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 				`{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":%d}}`, f.retryAfter)), nil
 		}
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
-		if f.forbidden[chatID] {
-			return response(http.StatusForbidden, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`), nil
-		}
 		threadID, _ := strconv.Atoi(request.FormValue("message_thread_id"))
+		switch to, migrated := f.migrated[chatID]; {
+		case f.forbidden[chatID]:
+			return response(http.StatusForbidden, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`), nil
+		case migrated:
+			return response(http.StatusBadRequest, fmt.Sprintf(`{"ok":false,"error_code":400,`+
+				`"description":"Bad Request: group chat was upgraded to a supergroup chat","parameters":{"migrate_to_chat_id":%d}}`, to)), nil
+		case f.goneTopics[threadID]:
+			return response(http.StatusBadRequest, `{"ok":false,"error_code":400,"description":"Bad Request: message thread not found"}`), nil
+		case f.refused[chatID] != "":
+			return response(http.StatusBadRequest, fmt.Sprintf(`{"ok":false,"error_code":400,"description":%q}`, f.refused[chatID])), nil
+		}
 		f.chatIDs = append(f.chatIDs, chatID)
 		f.threadIDs = append(f.threadIDs, threadID)
 		f.methods = append(f.methods, method)

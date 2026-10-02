@@ -3,12 +3,14 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"time"
 
+	telegram "github.com/go-telegram/bot"
 	"github.com/pyed/rtapi"
 )
 
@@ -253,20 +255,32 @@ func (a *application) checkDigest(ctx context.Context, now time.Time) {
 		if settings.Thread != 0 {
 			chatCtx = context.WithValue(ctx, messageThreadIDKey{}, settings.Thread)
 		}
-		if _, err := a.send(chatCtx, chatID, text); err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "forbidden") {
-				a.logger.Printf("[INFO] stopped the digest for chat %d: %s", chatID, err)
-				a.state.update(func(data *stateData) { delete(data.Digest, chatID) })
-			}
-			continue
+		// The chat may turn out to have moved; its digest moves with it.
+		sentTo, _, err := a.sendText(chatCtx, chatID, text)
+		switch {
+		case err == nil:
+			a.state.update(func(data *stateData) {
+				if current, ok := data.Digest[sentTo]; ok {
+					current.LastSent, current.Since = due, now.Unix()
+					current.Uploaded, current.Downloaded = counted.Up, counted.Down
+					data.Digest[sentTo] = current
+				}
+			})
+		case chatGone(err):
+			a.logger.Printf("[INFO] stopped the digest for chat %d: %s", sentTo, err)
+			a.state.update(func(data *stateData) { delete(data.Digest, sentTo) })
+		case errors.Is(err, telegram.ErrorBadRequest):
+			// Telegram would refuse it again, so it is not retried; the next
+			// digest also covers this one's time.
+			a.logger.Printf("[ERROR] digest for chat %d not sent, and not retried: %s", sentTo, err)
+			a.state.update(func(data *stateData) {
+				if current, ok := data.Digest[sentTo]; ok {
+					current.LastSent = due
+					data.Digest[sentTo] = current
+				}
+			})
 		}
-		a.state.update(func(data *stateData) {
-			if current, ok := data.Digest[chatID]; ok {
-				current.LastSent, current.Since = due, now.Unix()
-				current.Uploaded, current.Downloaded = counted.Up, counted.Down
-				data.Digest[chatID] = current
-			}
-		})
+		// Other failures, as of the network, are retried the next minute.
 	}
 }
 
