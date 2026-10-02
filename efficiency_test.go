@@ -17,7 +17,7 @@ import (
 func TestOnlyTrackerRepliesFetchTrackers(t *testing.T) {
 	app, telegramFake, rtorrentFake := buttonApp(t, handlerTorrents())
 	for _, text := range []string{"list", "down", "seeding", "paused", "checking", "errors", "active", "head", "tail",
-		"search deb", "latest", "count", "speed", "sort name", "digest now"} {
+		"search deb", "latest", "count", "speed", "sort name"} {
 		command(app, text)
 		drain(telegramFake)
 	}
@@ -28,11 +28,18 @@ func TestOnlyTrackerRepliesFetchTrackers(t *testing.T) {
 		t.Fatalf("lists without trackers fetched %d trackers", len(calls))
 	}
 
+	// A digest names the trackers of torrents with errors, and only those.
+	command(app, "digest now")
+	drain(telegramFake)
+	if calls := rtorrentFake.called("t.url"); len(calls) != 1 || calls[0][0] != strings.Repeat("E", 40)+":t0" {
+		t.Fatalf("digest fetched trackers %v, want only the errored torrent's", calls)
+	}
+
 	command(app, "trackers")
 	if text := nextSent(t, telegramFake).text; !strings.Contains(text, "2 - tracker.example.org") {
 		t.Fatalf("trackers = %q", text)
 	}
-	if calls := rtorrentFake.called("t.url"); len(calls) != len(handlerTorrents()) {
+	if calls := rtorrentFake.called("t.url"); len(calls) != 1+len(handlerTorrents()) {
 		t.Fatalf("trackers fetched %d trackers, want one per torrent", len(calls))
 	}
 

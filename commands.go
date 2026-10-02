@@ -48,7 +48,7 @@ var botCommands = []botCommand{
 	{"trackers", "tr", "Count torrents per tracker"},
 	{"sort", "so", "Sort lists: sort [rev] name|downrate|uprate|size|ratio|age|upload"},
 	{"notify", "", "Choose this chat's notifications: notify [on|off]"},
-	{"digest", "", "Get a daily summary: digest 08:00, digest now, or digest off"},
+	{"digest", "", "Get a summary every day, week, or month: digest 08:00 [weekly|monthly], digest now, or digest off"},
 	{"whoami", "", "Show your Telegram user ID and this chat's ID"},
 	{"version", "", "Show the rtelegram and rTorrent versions"},
 	{"help", "", "List the commands"},

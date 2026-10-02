@@ -176,7 +176,7 @@ no other torrent's hash starts with them.
 | `notify [on\|off]` | | Choose which notifications this chat gets |
 | `limit [down N] [up N]\|off` | | Show or set the global speed limits |
 | `quiet HH:MM-HH:MM down N [up N]\|off` | | Lower the limits every night |
-| `digest HH:MM\|now\|off` | | Get a daily summary in this chat |
+| `digest HH:MM [weekly\|monthly]\|now\|off` | | Get a summary in this chat every day, week, or month |
 | `find QUERY` | | Search an indexer and add a result with a tap |
 | `watch [add NAME QUERY\|del NAME]` | | Add new releases for a search automatically |
 | `whoami` | | Show your user ID and this chat's ID |
@@ -220,7 +220,7 @@ count - Count torrents in each state
 trackers - Count torrents per tracker
 sort - Sort lists: sort [rev] name|downrate|uprate|size|ratio|age|upload
 notify - Choose this chat's notifications: notify [on|off]
-digest - Get a daily summary: digest 08:00, digest now, or digest off
+digest - Get a summary every day, week, or month: digest 08:00 [weekly|monthly], digest now, or digest off
 whoami - Show your Telegram user ID and this chat's ID
 version - Show the rtelegram and rTorrent versions
 help - List the commands
@@ -319,13 +319,34 @@ chat that blocks or removes the bot is unsubscribed.
 
 ## Daily digest
 
-`/digest 08:00` sends this chat a summary every day at that time: torrents
-completed and added in the last day, how much was uploaded and downloaded since
-the previous digest, how many torrents are in each state, current speeds, and
-free space. `/digest now` shows one straight away, `/digest off` stops it, and
-`/digest` shows when it comes. A digest missed while the bot was offline comes
-as soon as it is back, at most once a day, and in a group it goes to the topic
-`/digest` was sent from.
+`/digest 08:00` sends this chat a summary every day at that time,
+`/digest 08:00 weekly` every Monday, and `/digest 08:00 monthly` on the 1st of
+each month. Each covers the time since the previous digest:
+
+```
+📰 Daily digest, Fri 2 Oct
+Since Thu 1 Oct 08:00
+
+Completed: 2
+Added: 3
+
+Uploaded: 48.2 GiB
+Downloaded: 9.7 GiB
+
+Torrents: 2887 seeding, 166 with errors
+Errors:
+• tracker.example, 150 torrents: Tracker: [Failure reason "Unregistered torrent"]
+• other.example, 16 torrents: Tracker: [Timeout was reached]
+
+Free space: 1.2 TiB
+```
+
+Torrents with errors are grouped by tracker and message. Traffic is counted
+by the bot, so it is right even when rTorrent restarts between digests, which
+resets the totals rTorrent reports. `/digest now` shows the digest so far
+without resetting it, `/digest off` stops it, and `/digest` shows when it
+comes. A digest missed while the bot was offline comes as soon as it is back,
+once, and in a group it goes to the topic `/digest` was sent from.
 
 ## Deleting data
 

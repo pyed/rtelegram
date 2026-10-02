@@ -31,6 +31,8 @@ type stateData struct {
 	Watch []watchRule `json:"watch,omitempty"`
 	// Digest holds each chat's daily digest.
 	Digest map[int64]digestSettings `json:"digest,omitempty"`
+	// Traffic counts what rTorrent transfers, for digests.
+	Traffic *traffic `json:"traffic,omitempty"`
 }
 
 type notifySettings struct {
@@ -101,6 +103,17 @@ func (s *state) update(change func(*stateData)) error {
 	defer s.mu.Unlock()
 	change(&s.data)
 	return s.save()
+}
+
+// change applies change in memory only, for frequent bookkeeping that the
+// next update saves with everything else.
+func (s *state) change(change func(*stateData)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	change(&s.data)
 }
 
 // save writes the state atomically: to a private temporary file in the same

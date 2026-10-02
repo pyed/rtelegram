@@ -123,8 +123,11 @@ type application struct {
 	state     *state
 	screens   screenStore
 	ignoredMu sync.Mutex
-	ignored   map[int64]struct{}
-	wg        sync.WaitGroup
+	// trafficSaved is when the traffic count was last saved.
+	trafficMu    sync.Mutex
+	trafficSaved time.Time
+	ignored      map[int64]struct{}
+	wg           sync.WaitGroup
 }
 
 func main() {
@@ -245,6 +248,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	b.Start(ctx)
 	app.wg.Wait()
+	// Save what was counted since the last save, such as traffic.
+	if err := appState.update(func(*stateData) {}); err != nil {
+		logger.Printf("[ERROR] save state: %s", err)
+	}
 	return nil
 }
 
