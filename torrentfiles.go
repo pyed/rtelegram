@@ -43,9 +43,11 @@ func filePercent(file rtapi.File) string {
 	return fmt.Sprintf("%.0f%%", float64(file.CompletedChunks)*100/float64(file.Chunks))
 }
 
-// canSend reports whether /get could send a file.
-func (a *application) canSend(file rtapi.File) bool {
-	return a.dataRoot != "" && file.Complete() && file.Size <= maxUploadSize
+// canSend reports whether /get could send a file of a torrent: finished,
+// small enough, and inside -data-root.
+func (a *application) canSend(torrent *rtapi.Torrent, file rtapi.File) bool {
+	_, err := a.checkUpload(torrent, file)
+	return err == nil
 }
 
 // fileMatches returns the files whose paths contain every word of filter,
@@ -98,7 +100,7 @@ func (a *application) renderFiles(torrent *rtapi.Torrent, files []rtapi.File, fi
 	var row []models.InlineKeyboardButton
 	for _, file := range matches[page*filesPageSize : min(len(matches), (page+1)*filesPageSize)] {
 		fmt.Fprintf(&text, "\n%d. %s %s\n%s · %s", file.Index+1, priorityMarks[file.Priority], file.Path, formatBytes(file.Size), filePercent(file))
-		if a.canSend(file) {
+		if a.canSend(torrent, file) {
 			text.WriteString(" · 📥")
 		}
 		row = append(row, button(priorityMarks[file.Priority]+" "+strconv.Itoa(file.Index+1), "fo:"+strconv.Itoa(file.Index)))
@@ -154,15 +156,18 @@ func (a *application) renderFile(torrent *rtapi.Torrent, file rtapi.File, count 
 		choices = append(choices, button(label, "fp:"+strconv.Itoa(file.Index)+":"+choice.name))
 	}
 	rows := [][]models.InlineKeyboardButton{choices}
+	_, unsendable := a.checkUpload(torrent, file)
 	switch {
-	case a.canSend(file):
+	case unsendable == nil:
 		rows = append(rows, []models.InlineKeyboardButton{button("📥 Send", "fg:"+strconv.Itoa(file.Index))})
 	case a.dataRoot == "":
 		text.WriteString("\nSending files is off; see -data-root.")
 	case !file.Complete():
 		text.WriteString("\nIt can be sent once it has downloaded.")
-	default:
+	case file.Size > maxUploadSize:
 		text.WriteString("\nIt is too large to send: Telegram lets bots send up to 50 MB.")
+	default:
+		text.WriteString("\nIt cannot be sent: " + unsendable.Error() + ".")
 	}
 	rows = append(rows, []models.InlineKeyboardButton{button("« Files", "fl")})
 	return text.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
@@ -337,7 +342,8 @@ func fileLocation(torrent *rtapi.Torrent, file rtapi.File) string {
 }
 
 // checkUpload reports why a file cannot be sent, if it cannot, and returns
-// its path inside -data-root.
+// its path inside -data-root. It looks at the file through the data root,
+// so symbolic links cannot lead outside.
 func (a *application) checkUpload(torrent *rtapi.Torrent, file rtapi.File) (string, error) {
 	if a.dataRoot == "" {
 		return "", errors.New("sending files is off; set -data-root to the directory on this machine where rTorrent keeps data")
@@ -352,12 +358,27 @@ func (a *application) checkUpload(torrent *rtapi.Torrent, file rtapi.File) (stri
 	if location == "" {
 		return "", errors.New("rTorrent has not reported where this torrent keeps its data")
 	}
-	return containedRelative(a.dataRoot, location)
+	relative, err := containedRelative(a.dataRoot, location)
+	if err != nil {
+		return "", err
+	}
+	root, err := os.OpenRoot(a.dataRoot)
+	if err != nil {
+		return "", fmt.Errorf("open data root: %w", err)
+	}
+	defer root.Close()
+	info, err := root.Stat(relative)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", file.Path, err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxUploadSize {
+		return "", fmt.Errorf("%s is not a regular file under 50 MB", file.Path)
+	}
+	return relative, nil
 }
 
-// upload sends one finished file of a torrent from disk. The file must be
-// inside -data-root, and is opened through it so symbolic links cannot lead
-// outside.
+// upload sends one finished file of a torrent from disk, after checking it
+// again, since it may have changed while waiting its turn.
 func (a *application) upload(ctx context.Context, chatID int64, torrent *rtapi.Torrent, file rtapi.File) error {
 	relative, err := a.checkUpload(torrent, file)
 	if err != nil {
@@ -368,13 +389,6 @@ func (a *application) upload(ctx context.Context, chatID int64, torrent *rtapi.T
 		return fmt.Errorf("open data root: %w", err)
 	}
 	defer root.Close()
-	info, err := root.Stat(relative)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", file.Path, err)
-	}
-	if !info.Mode().IsRegular() || info.Size() > maxUploadSize {
-		return fmt.Errorf("%s is not a regular file under 50 MB", file.Path)
-	}
 	messageThreadID, _ := ctx.Value(messageThreadIDKey{}).(int)
 	err = a.retryRateLimited(ctx, func() error {
 		content, err := root.Open(relative)

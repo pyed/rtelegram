@@ -257,6 +257,25 @@ func TestGetRefusesWithoutADataRootOrOutsideIt(t *testing.T) {
 	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 1"); !strings.Contains(got, "not strictly inside") {
 		t.Fatalf("outside -data-root = %q", got)
 	}
+	// Nothing outside -data-root is marked 📥 or offers a Send button, and
+	// its card says why.
+	command(app, "get aaaaaaa")
+	choose := nextSent(t, telegramFake)
+	if strings.Count(choose.text, "📥") != 1 {
+		t.Fatalf("files outside -data-root = %q", choose.text)
+	}
+	press(app, master, choose.messageID, "fo:0")
+	if card := lastEdit(t, telegramFake); hasButton(card.buttons, "📥 Send") || !strings.Contains(card.text, "\nIt cannot be sent: ") ||
+		!strings.Contains(card.text, "not strictly inside") {
+		t.Fatalf("card outside -data-root = %q %v", card.text, buttonTexts(card.buttons))
+	}
+
+	// What is on disk counts, whatever rTorrent reports.
+	files = append(files, rtapi.File{Index: 3, Path: "Extras", Size: 3, Chunks: 1, CompletedChunks: 1, Priority: rtapi.FileNormal})
+	app, telegramFake, _ = fileApp(t, root, torrent, files)
+	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 4"); got != "get: Extras is not a regular file under 50 MB" {
+		t.Fatalf("directory = %q", got)
+	}
 
 	secret := filepath.Join(base, "secret.txt")
 	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
@@ -266,9 +285,9 @@ func TestGetRefusesWithoutADataRootOrOutsideIt(t *testing.T) {
 		t.Logf("symlink checks unavailable: %v", err)
 		return
 	}
-	files = append(files, rtapi.File{Index: 3, Path: "escape.mkv", Size: 6, Chunks: 1, CompletedChunks: 1, Priority: rtapi.FileNormal})
+	files = append(files, rtapi.File{Index: 4, Path: "escape.mkv", Size: 6, Chunks: 1, CompletedChunks: 1, Priority: rtapi.FileNormal})
 	app, telegramFake, _ = fileApp(t, root, torrent, files)
-	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 4"); !strings.HasPrefix(got, "get: read escape.mkv") {
+	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 5"); !strings.HasPrefix(got, "get: read escape.mkv") {
 		t.Fatalf("symlink escape = %q", got)
 	}
 	if len(telegramFake.documents) != 0 {
@@ -282,12 +301,16 @@ func TestGetSaysWhenSendingFails(t *testing.T) {
 	root := t.TempDir()
 	torrent, files := showTorrent(t, root)
 	app, telegramFake, _ := fileApp(t, root, torrent, files)
-	if err := os.Remove(filepath.Join(root, "show", "e01.mkv")); err != nil {
-		t.Fatal(err)
-	}
+	// Another file is still being sent, so this one waits its turn, and
+	// disappears meanwhile.
+	app.uploadMu.Lock()
 	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 1"); got != "Sending e01.mkv (11 B)…" {
 		t.Fatalf("get aaaaaaa 1 = %q", got)
 	}
+	if err := os.Remove(filepath.Join(root, "show", "e01.mkv")); err != nil {
+		t.Fatal(err)
+	}
+	app.uploadMu.Unlock()
 	app.wg.Wait()
 	if failed := nextSent(t, telegramFake).text; !strings.HasPrefix(failed, "get: read e01.mkv: ") {
 		t.Fatalf("failure = %q", failed)
