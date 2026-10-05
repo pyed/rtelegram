@@ -479,8 +479,14 @@ func (a *application) redrawList(ctx context.Context, key screenKey, spec listSp
 		return err.Error(), true
 	}
 	if len(torrents) == 0 {
+		// After a removal empties the list, say what was removed: "No
+		// matches" would read as though the search had found nothing.
+		text := listKinds[spec.kind].empty
+		if toast != "" {
+			text = toast
+		}
 		a.screens.forget(key)
-		if err := a.editScreen(ctx, key, listKinds[spec.kind].empty, nil); err != nil {
+		if err := a.editScreen(ctx, key, text, nil); err != nil {
 			return err.Error(), true
 		}
 		return toast, false

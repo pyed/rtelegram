@@ -196,6 +196,29 @@ func TestRemoveButtonAsksFirst(t *testing.T) {
 	}
 }
 
+// Removing the last torrent a list shows leaves the message saying what was
+// removed, not that the search finds nothing.
+func TestRemovingTheLastResultSaysSo(t *testing.T) {
+	app, telegramFake, _ := buttonApp(t, handlerTorrents())
+	command(app, "search gentoo")
+	list := nextSent(t, telegramFake)
+	press(app, master, list.messageID, "t:"+strings.Repeat("E", 40))
+	press(app, master, list.messageID, "a:del")
+	press(app, master, list.messageID, "y:del")
+	if after := lastEdit(t, telegramFake); after.text != "Removed: Gentoo" || len(after.buttons) != 0 {
+		t.Fatalf("message after removing the only match = %q %v", after.text, buttonTexts(after.buttons))
+	}
+	// Paging an emptied list still says it is empty.
+	command(app, "search ubuntu")
+	other := nextSent(t, telegramFake)
+	command(app, "del bbb")
+	nextSent(t, telegramFake)
+	press(app, master, other.messageID, "pg:0")
+	if after := lastEdit(t, telegramFake); after.text != "No matches" {
+		t.Fatalf("emptied list = %q", after.text)
+	}
+}
+
 func TestDeldataCommandAsksWithButtons(t *testing.T) {
 	root := t.TempDir()
 	show := filepath.Join(root, "show")
