@@ -228,3 +228,79 @@ func TestQuietHoursSaveLimitsBeforeChangingThem(t *testing.T) {
 		t.Fatalf("limits %v; saved before changing them: %v", limitsOf(rtorrentFake), savedFirst.Load())
 	}
 }
+
+// /quiet off restores the normal limits before forgetting them, so when
+// rTorrent refuses, quiet hours stay on and end as usual.
+func TestQuietOffKeepsQuietHoursWhenRestoringFails(t *testing.T) {
+	clock := at(1, 0)
+	app, telegramFake, rtorrentFake := quietApp(t, &clock)
+	lastSentText(t, telegramFake, app, "quiet 23:00-07:00 down 2M")
+	rtorrentFake.set(func(f *fakeRtorrent) { f.refuseLimits = true })
+	if got := lastSentText(t, telegramFake, app, "quiet off"); !strings.HasPrefix(got, "quiet: quiet hours stay on, since the normal limits could not be restored") {
+		t.Fatalf("quiet off = %q", got)
+	}
+	app.state.read(func(data *stateData) {
+		if data.Quiet == nil || data.Quiet.Saved == nil {
+			t.Fatalf("quiet hours after a refused restore = %+v", data.Quiet)
+		}
+	})
+	rtorrentFake.set(func(f *fakeRtorrent) { f.refuseLimits = false })
+	app.checkQuiet(context.Background(), at(7, 0))
+	if limitsOf(rtorrentFake) != [2]uint64{10 << 20, 2 << 20} {
+		t.Fatalf("limits after quiet hours = %v", limitsOf(rtorrentFake))
+	}
+}
+
+// A restart of rTorrent puts back the limits in rtorrent.rc, so during quiet
+// hours the quiet limits are applied again. A limit set during quiet hours is
+// what comes back after them, for its direction only.
+func TestQuietLimitsReturnAfterRTorrentRestarts(t *testing.T) {
+	clock := at(22, 30)
+	app, telegramFake, rtorrentFake := quietApp(t, &clock)
+	ctx := context.Background()
+	lastSentText(t, telegramFake, app, "quiet 23:00-07:00 down 2M")
+	app.checkQuiet(ctx, at(23, 0))
+	lastSentText(t, telegramFake, app, "limit up 1M")
+	app.checkQuiet(ctx, at(23, 30))
+	if limitsOf(rtorrentFake) != [2]uint64{2 << 20, 1 << 20} {
+		t.Fatalf("limits while rTorrent runs = %v", limitsOf(rtorrentFake))
+	}
+
+	rtorrentFake.set(func(f *fakeRtorrent) { f.pid, f.limits = 5678, [2]uint64{0, 0} })
+	app.checkQuiet(ctx, at(1, 0))
+	if limitsOf(rtorrentFake) != [2]uint64{2 << 20, 0} {
+		t.Fatalf("limits after rTorrent restarted = %v", limitsOf(rtorrentFake))
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.limits[1] = 3 << 20 })
+	app.checkQuiet(ctx, at(1, 1))
+	if limitsOf(rtorrentFake) != [2]uint64{2 << 20, 3 << 20} {
+		t.Fatalf("applied again without a restart: %v", limitsOf(rtorrentFake))
+	}
+	app.checkQuiet(ctx, at(7, 0))
+	if limitsOf(rtorrentFake) != [2]uint64{10 << 20, 1 << 20} {
+		t.Fatalf("limits after quiet hours = %v", limitsOf(rtorrentFake))
+	}
+}
+
+// Quiet hours applied by a version that did not note rTorrent's process are
+// taken to hold, rather than applied again.
+func TestQuietHoursFromBeforeTheProcessWasNoted(t *testing.T) {
+	clock := at(1, 0)
+	app, _, rtorrentFake := quietApp(t, &clock)
+	down := uint64(2 << 20)
+	if err := app.state.update(func(data *stateData) {
+		data.Quiet = &quietHours{Start: "23:00", End: "07:00", Down: &down, Saved: &[2]uint64{10 << 20, 2 << 20}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.limits = [2]uint64{4 << 20, 2 << 20} })
+	app.checkQuiet(context.Background(), at(1, 0))
+	if limitsOf(rtorrentFake) != [2]uint64{4 << 20, 2 << 20} {
+		t.Fatalf("limits = %v", limitsOf(rtorrentFake))
+	}
+	app.state.read(func(data *stateData) {
+		if data.Quiet.PID != 1234 {
+			t.Fatalf("noted process %d", data.Quiet.PID)
+		}
+	})
+}

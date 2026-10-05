@@ -301,7 +301,10 @@ for example while others at home are streaming. Give `down`, `up`, or both;
 the other limit stays as it is. When quiet hours end, the limits go back to
 what they were, or to whatever `/limit` set during quiet hours. Windows can
 cross midnight, times are in the bot's time zone, and quiet hours survive a
-restart. `/quiet` shows the schedule and `/quiet off` removes it.
+restart of the bot. A restart of rTorrent brings back the limits in its
+`rtorrent.rc`, so during quiet hours the bot applies the quiet limits again.
+`/quiet` shows the schedule and `/quiet off` removes it, once the normal
+limits are back.
 
 ## Notifications
 

@@ -130,6 +130,10 @@ type application struct {
 	transfers    map[string]rtapi.Transfer
 	// uploadMu sends files one at a time.
 	uploadMu sync.Mutex
+	// quietMu keeps quiet hours and limit changes from crossing; quietError
+	// is the last error the quiet hours check logged, which it does not repeat.
+	quietMu    sync.Mutex
+	quietError string
 	ignored      map[int64]struct{}
 	wg           sync.WaitGroup
 }
