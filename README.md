@@ -244,7 +244,8 @@ when it is already loaded. rTorrent fetches links in the background; if nothing
 appears within 15 seconds, the bot reports that instead.
 
 Group commands must start with `/`, and replies to commands in forum topics stay
-in the same topic.
+in the same topic. `/start` without torrents named, as Telegram sends it when
+someone opens a chat with the bot, shows the list of commands.
 
 rTorrent multicalls are not transactional. If a batched start, stop, check, or
 metadata deletion fails, the bot warns that some selected torrents may already
@@ -335,7 +336,7 @@ When a group becomes a supergroup, which changes its ID, its notifications,
 digest, and watch rules follow it, and when their forum topic is deleted, they
 go to the group itself.
 
-## Daily digest
+## Digests
 
 `/digest 08:00` sends this chat a summary every day at that time,
 `/digest 08:00 weekly` every Monday, and `/digest 08:00 monthly` on the 1st of

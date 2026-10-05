@@ -520,6 +520,11 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 	case "stop", "sp":
 		a.stop(ctx, chatID, args)
 	case "start", "st":
+		// Telegram sends /start when someone opens a chat with the bot.
+		if len(args) == 0 {
+			a.send(ctx, chatID, helpText)
+			return
+		}
 		a.start(ctx, chatID, args)
 	case "check", "ck":
 		a.check(ctx, chatID, args)

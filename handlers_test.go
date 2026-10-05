@@ -105,6 +105,7 @@ func TestCommandHandlers(t *testing.T) {
 		{"speed", []string{"ss"}, []reply{{is: "↓ 2.0 KiB ↑ 1.0 KiB"}}, nil},
 		{"version", []string{"version"}, []reply{{is: "rTorrent/libtorrent: 0.9.8/0.13.8\nrtelegram: " + version}}, nil},
 		{"help", []string{"help"}, []reply{{is: helpText}}, nil},
+		{"start alone, as Telegram sends it when a chat opens", []string{"/start"}, []reply{{is: helpText}}, calledWith("d.start")},
 		{"unknown", []string{"bogus"}, []reply{{is: "no such command, try /help"}}, nil},
 	}
 	for _, test := range tests {

@@ -22,7 +22,7 @@ const (
 	trafficSaveInterval = 10 * time.Minute
 )
 
-// digestSettings is one chat's daily digest.
+// digestSettings is one chat's digest: daily, weekly, or monthly.
 type digestSettings struct {
 	Time string `json:"time"` // "08:00", in the bot's time zone
 	// Every is "weekly" or "monthly"; empty is daily.

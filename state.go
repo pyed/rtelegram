@@ -29,7 +29,7 @@ type stateData struct {
 	Quiet *quietHours `json:"quiet,omitempty"`
 	// Watch holds the rules that add new search results automatically.
 	Watch []watchRule `json:"watch,omitempty"`
-	// Digest holds each chat's daily digest.
+	// Digest holds each chat's digest.
 	Digest map[int64]digestSettings `json:"digest,omitempty"`
 	// Traffic counts what rTorrent transfers, for digests.
 	Traffic *traffic `json:"traffic,omitempty"`
