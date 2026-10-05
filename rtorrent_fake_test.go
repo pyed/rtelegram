@@ -27,6 +27,8 @@ type fakeRtorrent struct {
 	limits    [2]uint64               // global down and up rate limits
 	totals    [2]uint64               // session uploaded and downloaded bytes
 	downTotal map[string]uint64       // d.down.total by hash; d.up.total is UpTotal
+	peers     map[string][]bool       // each torrent's peers, true for incoming
+	pid       int                     // system.pid, which a restart changes
 	freeSpace uint64                  // d.free_diskspace for every active torrent
 	files     map[string][]rtapi.File // by torrent hash
 	load      func(body string) *rtapi.Torrent
@@ -50,7 +52,7 @@ func newFakeRtorrent(t *testing.T, torrents ...*rtapi.Torrent) (*fakeRtorrent, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &fakeRtorrent{t: t, torrents: torrents, directory: "/downloads", totals: [2]uint64{3 << 30, 5 << 30}}
+	fake := &fakeRtorrent{t: t, torrents: torrents, directory: "/downloads", totals: [2]uint64{3 << 30, 5 << 30}, pid: 1234}
 	var connections sync.WaitGroup
 	connections.Add(1)
 	go func() {
@@ -266,6 +268,8 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		return xmlrpcInt(6890), false
 	case "directory.default":
 		return xmlrpcString(f.directory), false
+	case "system.pid":
+		return xmlrpcInt(int64(f.pid)), false
 	case "throttle.global_down.max_rate":
 		return xmlrpcInt(int64(f.limits[0])), false
 	case "throttle.global_up.max_rate":
@@ -317,6 +321,9 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		}
 		return xmlrpcInt(int64(f.freeSpace)), false
 	case "d.update_priorities":
+		return xmlrpcInt(0), false
+	case "d.custom1.set":
+		torrent.Label = args[1]
 		return xmlrpcInt(0), false
 	case "f.multicall":
 		rows := make([]string, 0, len(f.files[torrent.Hash]))
@@ -394,6 +401,12 @@ func (f *fakeRtorrent) field(torrent *rtapi.Torrent, name string) string {
 		return xmlrpcInt(int64(torrent.Started))
 	case "d.down.total":
 		return xmlrpcInt(int64(f.downTotal[torrent.Hash]))
+	case "p.multicall=,p.is_incoming":
+		peers := make([]string, len(f.peers[torrent.Hash]))
+		for i, incoming := range f.peers[torrent.Hash] {
+			peers[i] = xmlrpcArray(flag(incoming))
+		}
+		return xmlrpcArray(peers...)
 	}
 	f.t.Errorf("unexpected torrent field %s", name)
 	return xmlrpcString("")
