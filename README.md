@@ -357,13 +357,17 @@ Free space: 1.2 TiB
 
 Torrents with errors are grouped by tracker and message. Torrents count as
 added when they first started, which rTorrent remembers across restarts.
-Traffic is counted by the bot, so it is right even when rTorrent restarts
-between digests, which resets the totals rTorrent reports. `/digest now` shows
-the digest so far without resetting it, `/digest off` stops it, and `/digest`
-shows when it comes. A digest missed while the bot was offline comes as soon
-as it is back, once, and in a group it goes to the topic `/digest` was sent
-from. A digest Telegram refuses, as when the bot lacks the right to post in a
-group, is not retried; the next one covers its time too.
+Uploaded and Downloaded count torrent data only, from each torrent's own
+totals. rTorrent's global totals, which `/stats` shows, also count the
+protocol messages exchanged with peers: a large library that only seeds
+receives hundreds of megabytes of those a day. Traffic while the bot is not
+running counts too, as long as rTorrent keeps the same torrents meanwhile.
+
+`/digest now` shows the digest so far without resetting it, `/digest off`
+stops it, and `/digest` shows when it comes. A digest missed while the bot was
+offline comes as soon as it is back, once, and in a group it goes to the topic
+`/digest` was sent from. A digest Telegram refuses, as when the bot lacks the
+right to post in a group, is not retried; the next one covers its time too.
 
 ## Deleting data
 

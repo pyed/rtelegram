@@ -18,9 +18,27 @@ func day(n, hour, minute int) time.Time {
 
 func unix(at time.Time) uint64 { return uint64(at.Unix()) }
 
+// transferred sets how much torrent i has uploaded and downloaded in all.
+func transferred(rtorrentFake *fakeRtorrent, i int, up, down uint64) {
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		if f.downTotal == nil {
+			f.downTotal = make(map[string]uint64)
+		}
+		f.torrents[i].UpTotal, f.downTotal[f.torrents[i].Hash] = up, down
+	})
+}
+
+func seedingTorrents(count int) rtapi.Torrents {
+	torrents := make(rtapi.Torrents, count)
+	for i := range torrents {
+		torrents[i] = &rtapi.Torrent{Name: fmt.Sprintf("seed %d", i+1), Hash: fmt.Sprintf("%X", i+10) + strings.Repeat("0", 39), State: rtapi.Seeding}
+	}
+	return torrents
+}
+
 func TestDigestComesOnceADayAtItsTime(t *testing.T) {
 	clock := day(1, 10, 0)
-	app, telegramFake, rtorrentFake := buttonApp(t, nil)
+	app, telegramFake, rtorrentFake := buttonApp(t, seedingTorrents(1))
 	app.now = func() time.Time { return clock }
 	ctx := context.Background()
 
@@ -34,7 +52,7 @@ func TestDigestComesOnceADayAtItsTime(t *testing.T) {
 		t.Fatalf("a digest came early: %q", sent)
 	}
 
-	rtorrentFake.set(func(f *fakeRtorrent) { f.totals = [2]uint64{4 << 30, 7 << 30} })
+	transferred(rtorrentFake, 0, 1<<30, 2<<30)
 	app.checkDigest(ctx, day(2, 8, 0))
 	app.checkDigest(ctx, day(2, 8, 30))
 	sent := drain(telegramFake)
@@ -43,15 +61,94 @@ func TestDigestComesOnceADayAtItsTime(t *testing.T) {
 		t.Fatalf("day 2 = %q", sent)
 	}
 
-	// The count goes on while rTorrent restarts, which resets its totals:
-	// 2 GiB each way before the restart, then 1 GiB each way after it.
-	rtorrentFake.set(func(f *fakeRtorrent) { f.totals = [2]uint64{6 << 30, 9 << 30} })
+	// A crash of rTorrent loses what it counted since it last saved its
+	// session, which costs the count nothing: 2 GiB each way, then a crash
+	// takes 1 GiB back, then 1 GiB each way more.
+	transferred(rtorrentFake, 0, 3<<30, 4<<30)
 	app.checkDigest(ctx, day(2, 12, 0))
-	rtorrentFake.set(func(f *fakeRtorrent) { f.totals = [2]uint64{1 << 30, 1 << 30} })
+	transferred(rtorrentFake, 0, 2<<30, 3<<30)
+	app.checkDigest(ctx, day(2, 13, 0))
+	transferred(rtorrentFake, 0, 3<<30, 4<<30)
 	app.checkDigest(ctx, day(3, 8, 0))
 	if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], "Since Fri 2 Oct 08:00\n") ||
 		!strings.Contains(sent[0], "\nUploaded: 3.0 GiB\nDownloaded: 3.0 GiB\n") {
-		t.Fatalf("after an rTorrent restart = %q", sent)
+		t.Fatalf("after an rTorrent crash = %q", sent)
+	}
+}
+
+// rTorrent's global totals include the protocol messages exchanged with
+// peers, hundreds of megabytes a day for a large seeding library; the digest
+// counts only torrent data.
+func TestDigestCountsOnlyTorrentData(t *testing.T) {
+	app, telegramFake, rtorrentFake := buttonApp(t, seedingTorrents(2))
+	app.now = func() time.Time { return day(1, 10, 0) }
+	lastSentText(t, telegramFake, app, "digest 08:00")
+	rtorrentFake.set(func(f *fakeRtorrent) { f.totals[0], f.totals[1] = f.totals[0]+(5<<30), f.totals[1]+(200<<20) })
+	transferred(rtorrentFake, 0, 3<<30, 0)
+	transferred(rtorrentFake, 1, 2<<30, 0)
+	app.checkDigest(context.Background(), day(2, 8, 0))
+	if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], "\nUploaded: 5.0 GiB\nDownloaded: 0 B\n") {
+		t.Fatalf("digest of a seeding library = %q", sent)
+	}
+}
+
+// A torrent's totals count from the second look at it: a new torrent, or
+// one rTorrent loads late after a restart, does not bring in everything it
+// ever transferred, and one that goes takes nothing back.
+func TestDigestTrafficAsTorrentsComeAndGo(t *testing.T) {
+	app, telegramFake, rtorrentFake := buttonApp(t, seedingTorrents(2))
+	ctx := context.Background()
+	app.now = func() time.Time { return day(1, 10, 0) }
+	transferred(rtorrentFake, 0, 0, 10<<30)
+	transferred(rtorrentFake, 1, 0, 20<<30)
+	lastSentText(t, telegramFake, app, "digest 08:00")
+
+	// The first goes, another comes, and the second downloads 1 GiB.
+	late := &rtapi.Torrent{Name: "late", Hash: strings.Repeat("F", 40), State: rtapi.Seeding, UpTotal: 30 << 30}
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.torrents = append(f.torrents[1:], late)
+		f.downTotal[late.Hash] = 40 << 30
+	})
+	transferred(rtorrentFake, 0, 0, 21<<30)
+	app.checkDigest(ctx, day(1, 12, 0))
+	transferred(rtorrentFake, 1, 31<<30, 40<<30)
+	app.checkDigest(ctx, day(2, 8, 0))
+	if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], "\nUploaded: 1.0 GiB\nDownloaded: 1.0 GiB\n") {
+		t.Fatalf("digest = %q", sent)
+	}
+}
+
+// After rtelegram restarts, what the torrents transferred while it was away
+// counts if rTorrent still has the same torrents; otherwise counting starts
+// over from the first look.
+func TestDigestTrafficAcrossAnRtelegramRestart(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		change      func(*fakeRtorrent)
+		up, down    string
+		description string
+	}{
+		{"same torrents", func(*fakeRtorrent) {}, "2.0 GiB", "3.0 GiB", "counted while away"},
+		{"a torrent added", func(f *fakeRtorrent) {
+			f.torrents = append(f.torrents, &rtapi.Torrent{Name: "new", Hash: strings.Repeat("F", 40), State: rtapi.Seeding})
+		}, "0 B", "0 B", "not counted while away"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app, telegramFake, rtorrentFake := buttonApp(t, seedingTorrents(3))
+			ctx := context.Background()
+			app.now = func() time.Time { return day(1, 10, 0) }
+			transferred(rtorrentFake, 0, 1<<30, 1<<30)
+			lastSentText(t, telegramFake, app, "digest 08:00")
+
+			app.transfers = nil // rtelegram restarts; the state stays
+			transferred(rtorrentFake, 0, 3<<30, 4<<30)
+			rtorrentFake.set(test.change)
+			app.checkDigest(ctx, day(2, 8, 0))
+			want := "\nUploaded: " + test.up + "\nDownloaded: " + test.down + "\n"
+			if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], want) {
+				t.Fatalf("%s: digest = %q, want %q", test.description, sent, want)
+			}
+		})
 	}
 }
 
@@ -95,6 +192,16 @@ func TestDigestAddedSurvivesAnRTorrentRestart(t *testing.T) {
 	app.checkDigest(context.Background(), day(2, 8, 0))
 	if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], "\nAdded: 2\n") {
 		t.Fatalf("digest after an rTorrent restart = %q", sent)
+	}
+}
+
+func TestFingerprintIgnoresOrder(t *testing.T) {
+	a, b, c := strings.Repeat("A", 40), strings.Repeat("B", 40), strings.Repeat("C", 40)
+	if fingerprint([]string{a, b, c}) != fingerprint([]string{c, a, b}) {
+		t.Fatal("the same hashes in another order have another fingerprint")
+	}
+	if fingerprint([]string{a, b}) == fingerprint([]string{a, c}) {
+		t.Fatal("different hashes have the same fingerprint")
 	}
 }
 
@@ -238,17 +345,18 @@ func TestDigestOmitsFreeSpaceWithoutActiveTorrents(t *testing.T) {
 // A chat that sets up its digest while another chat's is counting gets only
 // the traffic since its own setup.
 func TestDigestCountsTrafficFromEachChatsSetup(t *testing.T) {
-	app, telegramFake, rtorrentFake := buttonApp(t, nil)
+	app, telegramFake, rtorrentFake := buttonApp(t, seedingTorrents(1))
 	ctx := context.Background()
 	app.now = func() time.Time { return day(1, 10, 0) }
+	transferred(rtorrentFake, 0, 3<<30, 5<<30)
 	app.digest(ctx, 111, []string{"08:00"})
-	rtorrentFake.set(func(f *fakeRtorrent) { f.totals = [2]uint64{4 << 30, 5 << 30} })
+	transferred(rtorrentFake, 0, 4<<30, 5<<30)
 	app.checkDigest(ctx, day(1, 12, 0))
 	app.now = func() time.Time { return day(1, 13, 0) }
 	app.digest(ctx, 222, []string{"08:00"})
 	drain(telegramFake)
 
-	rtorrentFake.set(func(f *fakeRtorrent) { f.totals = [2]uint64{6 << 30, 5 << 30} })
+	transferred(rtorrentFake, 0, 6<<30, 5<<30)
 	app.checkDigest(ctx, day(2, 8, 0))
 	uploaded := make(map[int64]string)
 	for range 2 {

@@ -26,6 +26,7 @@ type fakeRtorrent struct {
 	upRate    uint64
 	limits    [2]uint64               // global down and up rate limits
 	totals    [2]uint64               // session uploaded and downloaded bytes
+	downTotal map[string]uint64       // d.down.total by hash; d.up.total is UpTotal
 	freeSpace uint64                  // d.free_diskspace for every active torrent
 	files     map[string][]rtapi.File // by torrent hash
 	load      func(body string) *rtapi.Torrent
@@ -391,6 +392,8 @@ func (f *fakeRtorrent) field(torrent *rtapi.Torrent, name string) string {
 		return xmlrpcInt(int64(torrent.Finished))
 	case "d.timestamp.started":
 		return xmlrpcInt(int64(torrent.Started))
+	case "d.down.total":
+		return xmlrpcInt(int64(f.downTotal[torrent.Hash]))
 	}
 	f.t.Errorf("unexpected torrent field %s", name)
 	return xmlrpcString("")

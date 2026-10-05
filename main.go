@@ -123,9 +123,11 @@ type application struct {
 	state     *state
 	screens   screenStore
 	ignoredMu sync.Mutex
-	// trafficSaved is when the traffic count was last saved.
+	// trafficSaved is when the traffic count was last saved, and transfers
+	// each torrent's totals at the last look; trafficMu guards both.
 	trafficMu    sync.Mutex
 	trafficSaved time.Time
+	transfers    map[string]rtapi.Transfer
 	ignored      map[int64]struct{}
 	wg           sync.WaitGroup
 }

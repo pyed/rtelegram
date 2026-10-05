@@ -3,6 +3,8 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -37,48 +39,74 @@ type digestSettings struct {
 	Downloaded uint64 `json:"downloaded,omitempty"`
 }
 
-// traffic adds up what rTorrent transfers. rTorrent reports totals since it
-// started, so a restart resets them; the count carries on across restarts.
+// traffic adds up the torrent data rTorrent transfers, for digests. It goes
+// by each torrent's own totals, which leave out the protocol messages
+// exchanged with peers: rTorrent's global totals include those, and a
+// library that only seeds receives hundreds of megabytes of them a day.
 type traffic struct {
 	Up   uint64 `json:"up"`
 	Down uint64 `json:"down"`
-	// SeenUp and SeenDown are rTorrent's totals when last read.
+	// SeenUp and SeenDown are the torrents' totals at the last look, and Seen
+	// tells which torrents those were, so that after rtelegram restarts it
+	// counts what the same torrents transferred meanwhile.
 	SeenUp   uint64 `json:"seenUp"`
 	SeenDown uint64 `json:"seenDown"`
+	Seen     string `json:"seen,omitempty"`
 	// Since is when counting began, in Unix seconds.
 	Since int64 `json:"since"`
 }
 
-// grown is how much a total grew from seen to now. A total that shrank was
-// reset by an rTorrent restart, so all of it is new.
-func grown(seen, now uint64) uint64 {
-	if now >= seen {
-		return now - seen
-	}
-	return now
+// growth is how much a total grew. One that shrank, as rTorrent's totals do
+// when it loses some to a crash, grew by nothing.
+func growth(before, now uint64) uint64 {
+	return now - min(before, now)
 }
 
-// countTraffic adds what rTorrent transferred since the last look to the
+// countTraffic adds what the torrents transferred since the last look to the
 // traffic count, and returns the count. It is saved when save is set or has
 // not been for trafficSaveInterval; in between, it is kept in memory.
 func (a *application) countTraffic(ctx context.Context, now time.Time, save bool) (traffic, error) {
-	stats, err := a.rtorrent.StatsContext(ctx)
+	transfers, err := a.rtorrent.TransfersContext(ctx)
 	if err != nil {
 		return traffic{}, err
 	}
+	looked := make(map[string]rtapi.Transfer, len(transfers))
+	var up, down uint64
+	for _, transfer := range transfers {
+		looked[strings.ToUpper(transfer.Hash)] = transfer
+		up, down = up+transfer.Up, down+transfer.Down
+	}
+	seen := fingerprint(slices.Collect(maps.Keys(looked)))
+
 	a.trafficMu.Lock()
 	defer a.trafficMu.Unlock()
 	var counted traffic
 	a.state.change(func(data *stateData) {
 		if data.Traffic == nil {
-			data.Traffic = &traffic{SeenUp: stats.TotalUp, SeenDown: stats.TotalDown, Since: now.Unix()}
+			data.Traffic = &traffic{Since: now.Unix()}
 		}
 		count := data.Traffic
-		count.Up += grown(count.SeenUp, stats.TotalUp)
-		count.Down += grown(count.SeenDown, stats.TotalDown)
-		count.SeenUp, count.SeenDown = stats.TotalUp, stats.TotalDown
+		switch {
+		case a.transfers != nil:
+			// A torrent's totals count from the second look at it, so that
+			// neither a new torrent nor one that rTorrent is still loading
+			// after a restart brings in all it ever transferred.
+			for hash, transfer := range looked {
+				if before, ok := a.transfers[hash]; ok {
+					count.Up += growth(before.Up, transfer.Up)
+					count.Down += growth(before.Down, transfer.Down)
+				}
+			}
+		case count.Seen == seen:
+			// rtelegram restarted, and rTorrent has the same torrents as at
+			// the last look, so what they transferred meanwhile counts.
+			count.Up += growth(count.SeenUp, up)
+			count.Down += growth(count.SeenDown, down)
+		}
+		count.SeenUp, count.SeenDown, count.Seen = up, down, seen
 		counted = *count
 	})
+	a.transfers = looked
 	if save || now.Sub(a.trafficSaved) >= trafficSaveInterval {
 		if err := a.state.update(func(*stateData) {}); err != nil {
 			a.logger.Printf("[ERROR] save the traffic count: %s", err)
@@ -87,6 +115,13 @@ func (a *application) countTraffic(ctx context.Context, now time.Time, save bool
 		}
 	}
 	return counted, nil
+}
+
+// fingerprint names a set of hashes in a few characters.
+func fingerprint(hashes []string) string {
+	slices.Sort(hashes)
+	sum := sha256.Sum256([]byte(strings.Join(hashes, ",")))
+	return hex.EncodeToString(sum[:16])
 }
 
 func minutesOf(clock string) int {
