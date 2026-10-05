@@ -131,6 +131,8 @@ type application struct {
 	// uploadMu sends files one at a time, and bulkMu does bulk actions so.
 	uploadMu sync.Mutex
 	bulkMu   sync.Mutex
+	// statusMu keeps status messages from changing while they are updated.
+	statusMu sync.Mutex
 	// quietMu keeps quiet hours and limit changes from crossing; quietError
 	// is the last error the quiet hours check logged, which it does not repeat.
 	quietMu    sync.Mutex
@@ -250,6 +252,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	app.launch(ctx, app.watchEvents)
 	app.launch(ctx, app.watchQuiet)
 	app.launch(ctx, app.watchDigest)
+	app.launch(ctx, app.watchStatus)
 	if cfg.indexerURL != "" {
 		app.indexer = newIndexer(cfg.indexerURL, cfg.indexerKey)
 		logger.Printf("[INFO] Indexer: %s", indexerName(cfg.indexerURL))
@@ -545,6 +548,8 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.check(ctx, chatID, args)
 	case "stats", "sa":
 		a.stats(ctx, chatID)
+	case "status":
+		a.status(ctx, chatID, args)
 	case "speed", "ss":
 		a.speed(ctx, chatID)
 	case "count", "co":

@@ -46,6 +46,7 @@ type screen struct {
 	labels  []string       // the labels /labels has buttons for; "" is no label
 	picks   []string       // the labels a label picker offers
 	bulk    *bulkAction    // a list's bulk actions
+	status  bool           // a chat's status message
 	// cleanup marks a notification with a button that lists the
 	// unregistered torrents.
 	cleanup bool
@@ -274,9 +275,16 @@ func (a *application) renderCard(torrent *rtapi.Torrent, scr *screen) (string, *
 // sendScreen sends text with buttons and remembers what it shows. Text too
 // long for one message is sent without buttons.
 func (a *application) sendScreen(ctx context.Context, chatID int64, text string, keyboard *models.InlineKeyboardMarkup, scr *screen) error {
+	_, err := a.postScreen(ctx, chatID, text, keyboard, scr)
+	return err
+}
+
+// postScreen is sendScreen, and returns the message sent; its ID is 0 when
+// the text was too long for buttons.
+func (a *application) postScreen(ctx context.Context, chatID int64, text string, keyboard *models.InlineKeyboardMarkup, scr *screen) (screenKey, error) {
 	if utf8.RuneCountInString(text) > maxTelegramMessage {
 		_, err := a.send(ctx, chatID, text)
-		return err
+		return screenKey{chatID: chatID}, err
 	}
 	var message *models.Message
 	chatID, err := a.post(ctx, chatID, func(chatID int64, thread int) (err error) {
@@ -294,10 +302,11 @@ func (a *application) sendScreen(ctx context.Context, chatID int64, text string,
 	})
 	if err != nil {
 		a.logger.Printf("[ERROR] Send: %s", err)
-		return err
+		return screenKey{chatID: chatID}, err
 	}
-	a.screens.put(screenKey{chatID, message.ID}, scr)
-	return nil
+	key := screenKey{chatID, message.ID}
+	a.screens.put(key, scr)
+	return key, nil
 }
 
 // editScreen replaces a screen's text and buttons; nil keyboard removes them.
@@ -456,6 +465,11 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 			break
 		}
 		return a.pressLabels(ctx, key, scr, arg)
+	case "sr":
+		if !scr.status {
+			break
+		}
+		return a.pressStatus(ctx, key)
 	case "un":
 		if !scr.cleanup && (scr.list == nil || scr.list.kind != "errors") {
 			break

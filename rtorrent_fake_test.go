@@ -265,8 +265,11 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		return xmlrpcInt(int64(f.downRate)), false
 	case "throttle.global_up.rate":
 		return xmlrpcInt(int64(f.upRate)), false
-	case "throttle.up.max", "throttle.down.max":
-		return xmlrpcInt(0), false
+	case "throttle.down.max":
+		// With no throttle named, the global limit.
+		return xmlrpcInt(int64(f.limits[0])), false
+	case "throttle.up.max":
+		return xmlrpcInt(int64(f.limits[1])), false
 	case "throttle.global_up.total":
 		return xmlrpcInt(int64(f.totals[0])), false
 	case "throttle.global_down.total":

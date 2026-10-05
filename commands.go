@@ -48,6 +48,7 @@ var botCommands = []botCommand{
 	{"limit", "", "Show or set speed limits: limit down 5M up 1M, or limit off"},
 	{"quiet", "", "Lower speed limits at night: quiet 01:00-07:00 down 1M up 500K, or quiet off"},
 	{"stats", "sa", "Show transfer totals and rTorrent settings"},
+	{"status", "", "Pin a status message that stays up to date: status [off]"},
 	{"count", "co", "Count torrents in each state"},
 	{"trackers", "tr", "Count torrents per tracker"},
 	{"sort", "so", "Sort lists: sort [rev] name|downrate|uprate|size|ratio|age|upload"},

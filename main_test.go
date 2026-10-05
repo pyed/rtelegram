@@ -339,6 +339,14 @@ type fakeTelegram struct {
 	goneTopics map[int]bool
 	// refused maps chats to the Bad Request description sends to them get.
 	refused map[int64]string
+	// pins records pinChatMessage and unpinChatMessage calls, as
+	// "pin CHAT MESSAGE", with " quietly" for silent pins, or "unpin ...".
+	pins []string
+	// pinRefused are the chats where the bot may not pin messages.
+	pinRefused map[int64]bool
+	// editRefused maps messages to the Bad Request description edits of
+	// them get.
+	editRefused map[int]string
 }
 
 type sentMessage struct {
@@ -416,10 +424,24 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 	case "editMessageText":
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
 		messageID, _ := strconv.Atoi(request.FormValue("message_id"))
+		if description := f.editRefused[messageID]; description != "" {
+			return response(http.StatusBadRequest, fmt.Sprintf(`{"ok":false,"error_code":400,"description":%q}`, description)), nil
+		}
 		f.chatIDs = append(f.chatIDs, chatID)
 		f.methods = append(f.methods, method)
 		f.edits = append(f.edits, sentMessage{chatID: chatID, messageID: messageID, text: request.FormValue("text"), buttons: keyboard(request)})
 		result = fmt.Sprintf(`{"message_id":%d,"date":0,"chat":{"id":%d,"type":"private"}}`, messageID, chatID)
+	case "pinChatMessage", "unpinChatMessage":
+		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
+		if f.pinRefused[chatID] {
+			return response(http.StatusBadRequest, `{"ok":false,"error_code":400,"description":"Bad Request: not enough rights to manage pinned messages in the chat"}`), nil
+		}
+		pin := strings.TrimSuffix(method, "ChatMessage") + " " + request.FormValue("chat_id") + " " + request.FormValue("message_id")
+		if request.FormValue("disable_notification") == "true" {
+			pin += " quietly"
+		}
+		f.pins = append(f.pins, pin)
+		result = "true"
 	case "answerCallbackQuery":
 		f.answers = append(f.answers, callbackAnswer{text: request.FormValue("text"), alert: request.FormValue("show_alert") == "true"})
 		result = "true"

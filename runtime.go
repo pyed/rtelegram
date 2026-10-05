@@ -255,6 +255,8 @@ func (a *application) moveChat(from, to int64) {
 		moveKey(data.Notify, from, to)
 		moveKey(data.Digest, from, to)
 		moveKey(data.Sorts, from, to)
+		// A status message stays behind in the old chat.
+		delete(data.Status, from)
 		for i := range data.Watch {
 			if data.Watch[i].ChatID == from {
 				data.Watch[i].ChatID = to

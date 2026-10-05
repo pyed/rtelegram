@@ -180,6 +180,7 @@ few thousand six or seven.
 | `deldata HASH [confirm]` | | Remove a torrent and its data, after asking (see below) |
 | `setlabel HASH [LABEL\|-]` | | Set or remove a torrent's label, or choose one with buttons |
 | `stats`, `speed`, `count` | `sa`, `ss`, `co` | Show totals, current speeds, or torrents per state |
+| `status [off]` | | Pin a status message, like ruTorrent's status bar, that stays up to date (see [Status message](#status-message)) |
 | `notify [on\|off]` | | Choose which notifications this chat gets |
 | `limit [down N] [up N]\|off` | | Show or set the global speed limits |
 | `quiet HH:MM-HH:MM down N [up N]\|off` | | Lower the limits every night |
@@ -227,6 +228,7 @@ speed - Show current speeds, updating live
 limit - Show or set speed limits: limit down 5M up 1M, or limit off
 quiet - Lower speed limits at night: quiet 01:00-07:00 down 1M up 500K, or quiet off
 stats - Show transfer totals and rTorrent settings
+status - Pin a status message that stays up to date: status [off]
 count - Count torrents in each state
 trackers - Count torrents per tracker
 sort - Sort lists: sort [rev] name|downrate|uprate|size|ratio|age|upload
@@ -372,6 +374,36 @@ restart of the bot. A restart of rTorrent brings back the limits in its
 `rtorrent.rc`, so during quiet hours the bot applies the quiet limits again.
 `/quiet` shows the schedule and `/quiet off` removes it, once the normal
 limits are back.
+
+## Status message
+
+`/status` sends a message like ruTorrent's status bar, pins it without a
+notification, and keeps it up to date every minute; 🔄 Refresh updates it at
+once.
+
+```
+📊 rTorrent status
+↓ 2.3 MiB/s · limit 10.0 MiB/s · 12.4 GiB this session
+↑ 8.1 MiB/s · no limit · 210.5 GiB this session
+Torrents: 3104 · 3 downloading · 41 uploading · 152 with errors
+Peers: 58 in, 22 out · port 6890 open ✅
+Free space: 1.2 TiB
+Updated 14:05
+```
+
+It shows the speeds and global limits, what rTorrent transferred since it
+started (its own totals, which include protocol messages, as ruTorrent shows
+them), how many torrents are downloading, uploading, or have errors, and peer
+connections. Peers can connect in only through rTorrent's port, so one that
+did shows the port is reachable (✅). With peers connected out but none in,
+the port may be closed (⚠️), as when a router does not forward it. Free space
+is where rTorrent saves data. During quiet hours the message says until when,
+and when rTorrent stops answering, it says so.
+
+A chat has one status message: `/status` again replaces it, and `/status off`
+stops updating it and unpins it. In a group, the bot needs the right to pin
+messages; without it, the message still stays up to date. The bot remembers
+the message across restarts, and stops when someone deletes it.
 
 ## Notifications
 

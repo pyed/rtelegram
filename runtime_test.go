@@ -38,6 +38,8 @@ func TestAGroupThatBecameASupergroupKeepsItsSettings(t *testing.T) {
 	if err := app.state.update(func(data *stateData) {
 		data.Watch = []watchRule{{Name: "news", Query: "news", ChatID: group}}
 		data.Sorts[supergroup] = rtapi.ByUpTotal
+		// A status message stays behind: it cannot be edited in the new chat.
+		data.Status = map[int64]statusMessage{group: {Message: 7}}
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestAGroupThatBecameASupergroupKeepsItsSettings(t *testing.T) {
 		_, digestOld := data.Digest[group]
 		_, sortOld := data.Sorts[group]
 		_, digestNew := data.Digest[supergroup]
-		if notifyOld || digestOld || sortOld || len(data.Notify[supergroup].Events) == 0 || !digestNew ||
+		if notifyOld || digestOld || sortOld || len(data.Notify[supergroup].Events) == 0 || !digestNew || len(data.Status) != 0 ||
 			data.Sorts[supergroup] != rtapi.ByUpTotal || data.Watch[0].ChatID != supergroup {
 			t.Fatalf("state after the move = %+v", *data)
 		}
