@@ -152,10 +152,20 @@ func formatTorrent(torrent *rtapi.Torrent, reference string) string {
 }
 
 func formatTorrentInfo(torrent *rtapi.Torrent) string {
-	return fmt.Sprintf("%s\n%s %s (%s) ↓ %s ↑ %s R: %.2f UP: %s\nAdded: %s, ETA: %s\nTracker: %s",
+	info := fmt.Sprintf("%s\n%s %s (%s) ↓ %s ↑ %s R: %.2f UP: %s\nAdded: %s, ETA: %s\nTracker: %s",
 		torrent.Name, torrent.State, formatBytes(torrent.Completed), torrent.Percent,
 		formatBytes(torrent.DownRate), formatBytes(torrent.UpRate), torrent.Ratio,
 		formatBytes(torrent.UpTotal), timeFromUnix(addedAt(torrent)), formatETA(torrent), trackerHost(torrent.Tracker))
+	if label := labelOf(torrent); label != "" {
+		info += "\nLabel: " + label
+	}
+	if torrent.Message != "" {
+		info += "\n" + torrent.Message
+	}
+	if unregistered(torrent) {
+		info += "\nIts tracker no longer has it."
+	}
+	return info
 }
 
 // addedAt is when a torrent was added, in Unix seconds, as near as rTorrent

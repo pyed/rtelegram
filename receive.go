@@ -41,7 +41,7 @@ func (a *application) receiveTorrent(ctx context.Context, chatID int64, message 
 		a.send(ctx, chatID, "receiver: "+err.Error())
 		return
 	}
-	options := rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: label}
+	options := rtapi.DotTorrentWithOptions{Name: document.FileName, Dir: directory, Label: encodeLabel(label)}
 	if failure := a.addData(ctx, chatID, "receiver", document.FileName, data, options); failure != "" {
 		a.send(ctx, chatID, failure)
 	}

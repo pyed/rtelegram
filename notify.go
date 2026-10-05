@@ -53,6 +53,9 @@ type event struct {
 	text string // the message announcing the event on its own
 	line string // the event's line in a message announcing several
 	hash string // the torrent, for a details button; empty for disk events
+	// unregistered counts the unregistered torrents among those the event
+	// names, for a button that lists every unregistered torrent.
+	unregistered int
 }
 
 // watcher remembers the previous check, so changes are reported once.
@@ -327,7 +330,7 @@ func (a *application) errorEvents(ctx context.Context, w *watcher, fresh, torren
 
 	if len(due) > maxSingleEvents {
 		return []event{{kind: eventErrors, text: fmt.Sprintf("⚠️ Errors: %d torrents", len(due)) + errorGroups(due) +
-			"\n\n/errors lists every torrent with an error."}}
+			"\n\n/errors lists every torrent with an error.", unregistered: countUnregistered(due)}}
 	}
 	events := make([]event, len(due))
 	for i, torrent := range due {
@@ -431,12 +434,18 @@ func (a *application) deliver(ctx context.Context, events []event) {
 			if !slices.Contains(settings.Events, e.kind) {
 				continue
 			}
+			var rows [][]models.InlineKeyboardButton
+			if e.hash != "" {
+				rows = append(rows, []models.InlineKeyboardButton{button("ℹ Details", "t:"+e.hash)})
+			}
+			if e.unregistered > 0 {
+				rows = append(rows, []models.InlineKeyboardButton{button(fmt.Sprintf("🧹 %d unregistered: clean up", e.unregistered), "un")})
+			}
 			var err error
-			if e.hash == "" {
+			if len(rows) == 0 {
 				_, err = a.send(chatCtx, chatID, e.text)
 			} else {
-				details := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{button("ℹ Details", "t:"+e.hash)}}}
-				err = a.sendScreen(chatCtx, chatID, e.text, details, &screen{})
+				err = a.sendScreen(chatCtx, chatID, e.text, &models.InlineKeyboardMarkup{InlineKeyboard: rows}, &screen{cleanup: e.unregistered > 0})
 			}
 			if err != nil && chatGone(err) {
 				a.logger.Printf("[INFO] stopped notifying chat %d: %s", chatID, err)

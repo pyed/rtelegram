@@ -145,8 +145,9 @@ environment.
 
 Lists come with a button for each torrent, ten to a page with ◀ ▶ to move
 between pages. Tapping a torrent opens its card, with buttons to start or stop
-it, verify it, remove it, list its files, refresh, and go back to the list.
-Removing asks for confirmation first. Only the users in `RT_MASTERS` can use
+it, verify it, label it, remove it, list its files, refresh, and go back to
+the list. Removing asks for confirmation first. ☰ All under a list acts on
+every torrent it shows (see [Acting on whole lists](#acting-on-whole-lists)). Only the users in `RT_MASTERS` can use
 the buttons, even in groups, and the bot remembers the buttons of its last 500
 messages.
 
@@ -164,6 +165,8 @@ few thousand six or seven.
 | `down`, `seeding`, `paused`, `checking` | `dl`, `sd`, `pa`, `ch` | List torrents in that state |
 | `active` | `ac` | Show torrents currently transferring, with live updates |
 | `errors` | `er` | List torrents with errors, and the error |
+| `unregistered` | | List torrents their tracker deleted, with buttons that remove them all (see [Unregistered torrents](#unregistered-torrents)) |
+| `labels [NAME\|-]` | | Count torrents per label, with a button for each; or list one label's torrents, or those without a label |
 | `sort [rev] name\|downrate\|uprate\|size\|ratio\|age\|upload` | `so` | Set this chat's sort order |
 | `trackers` | `tr` | Count torrents per tracker |
 | `search QUERY` | `se` | List torrents whose name contains QUERY |
@@ -175,6 +178,7 @@ few thousand six or seven.
 | `start`, `stop`, `check` `HASH...\|all` | `st`, `sp`, `ck` | Start, stop, or verify torrents |
 | `del HASH...` | | Remove torrents from rTorrent and keep their data |
 | `deldata HASH [confirm]` | | Remove a torrent and its data, after asking (see below) |
+| `setlabel HASH [LABEL\|-]` | | Set or remove a torrent's label, or choose one with buttons |
 | `stats`, `speed`, `count` | `sa`, `ss`, `co` | Show totals, current speeds, or torrents per state |
 | `notify [on\|off]` | | Choose which notifications this chat gets |
 | `limit [down N] [up N]\|off` | | Show or set the global speed limits |
@@ -201,6 +205,8 @@ seeding - List seeding torrents
 paused - List stopped torrents
 checking - List torrents being verified
 errors - List torrents with errors, and why
+unregistered - List torrents their tracker deleted, to remove them
+labels - List labels, or a label's torrents: labels [NAME]
 latest - List the newest torrents: latest [N]
 head - Show the first torrents, updating live: head [N]
 tail - Show the last torrents, updating live: tail [N]
@@ -216,6 +222,7 @@ stop - Stop torrents: stop HASH... or stop all
 check - Verify torrents' data: check HASH... or check all
 del - Remove torrents and keep their data: del HASH...
 deldata - Remove a torrent and delete its data: deldata HASH
+setlabel - Label a torrent: setlabel HASH LABEL, or setlabel HASH - to remove it
 speed - Show current speeds, updating live
 limit - Show or set speed limits: limit down 5M up 1M, or limit off
 quiet - Lower speed limits at night: quiet 01:00-07:00 down 1M up 500K, or quiet off
@@ -275,6 +282,64 @@ needs no N. Files are read only from inside `-data-root`, and symbolic links
 cannot lead outside it. They go one at a time in the background, so the bot
 goes on answering, and each may take up to 15 minutes on a slow uplink.
 
+## Labels
+
+rtelegram shows and sets the labels ruTorrent shows. ruTorrent keeps a
+torrent's label in rTorrent's `d.custom1`, percent-encoded, and rtelegram reads
+and writes labels the same way, so both always agree. A torrent's card shows
+its label, and 🏷 Label offers the labels in use, the most used first, and
+✖ No label; for a new label, reply to that message with it. `/setlabel HASH
+LABEL` sets a label directly, `/setlabel HASH -` removes it, and `/setlabel
+HASH` shows the choices.
+
+`/labels` counts the torrents with each label, with a button for each that
+lists them; `/labels NAME` lists one label's torrents, ignoring case, and
+`/labels -` those without a label. Labels given when adding, in a `.torrent`
+file's caption or a watch rule, are stored the way ruTorrent stores them.
+Digests count what finished and what was added per label.
+
+## Acting on whole lists
+
+A list of two or more torrents ends with ☰ All, which starts, stops, verifies,
+labels, or removes every torrent the list shows, with or without their data.
+Each asks first, naming the torrents and how many there are. It then acts only
+on the torrents the list showed when ☰ was tapped that it still shows: a
+torrent that joined the list meanwhile is never touched, and the outcome says
+how many left it. The list of every torrent (`/list` without a tracker) offers
+no removal, so one tap can never remove the whole library; lists of a tracker,
+a label, a search, or a state do.
+
+Removing with data keeps the safeguards of `deldata` for every torrent: data
+is deleted only beneath `-data-root`, never through a symbolic link, and never
+while another torrent uses it. A torrent whose data overlaps that of a torrent
+that stays loaded, such as the same files seeded on two trackers, is kept with
+its data, unless both are being removed. So is a torrent with no data where
+rTorrent says it is; remove it without its data instead. Nothing is removed
+while rTorrent has not said where some torrent's data is. rtelegram removes
+the torrents from rTorrent first, checks which are gone, and only then deletes
+their data, one action at a time. The outcome lists what was removed, and what
+was kept and why.
+
+## Unregistered torrents
+
+When a private tracker deletes a torrent, or replaces it with a better
+release, it refuses the torrent's announces with a reason such as
+`Unregistered torrent`, and rTorrent shows that as the torrent's error.
+`/unregistered` lists these torrents, with 🗑 Remove all and, with
+`-data-root`, 💣 Remove all + data, which ask first and work as described in
+[Acting on whole lists](#acting-on-whole-lists).
+
+Only refusals saying the tracker no longer has the torrent count: Gazelle's and
+Ocelot's `Unregistered torrent`, XBT's `Torrent not registered with this
+tracker`, UNIT3D's `InfoHash not found.` and `Torrent has been deleted.`, and
+the like. A tracker that is down or times out never counts, nor does a refusal
+about the account, the client, or the tracker itself, such as an invalid
+passkey, a banned client, or maintenance. Only private torrents count: public
+torrents often list trackers that refuse every torrent they were not told
+about, and find peers elsewhere. The errors list and error notifications have
+a 🧹 button that lists unregistered torrents, digests count them, and their
+cards say so.
+
 ## Find and watch
 
 With an indexer configured, `/find QUERY` searches it and shows the eight
@@ -314,7 +379,9 @@ Send `/notify` in any chat, private or group, to choose what the bot tells it
 about. Each is a button to turn on or off:
 
 - **Completed downloads**, with a button to open the torrent's card.
-- **New errors**, such as a tracker rejecting a torrent.
+- **New errors**, such as a tracker rejecting a torrent. A message about
+  several errors that include unregistered torrents has a 🧹 button that lists
+  them, to remove them (see [Unregistered torrents](#unregistered-torrents)).
 - **Stalled downloads**, when a download makes no progress for `-stall-after`.
 - **Low disk space**, when free space where rTorrent saves data drops below
   `-low-disk`. The bot warns again only after space recovers.
@@ -347,8 +414,8 @@ each month. Each covers the time since the previous digest:
 📰 Daily digest, Fri 2 Oct
 Since Thu 1 Oct 08:00
 
-Completed: 2
-Added: 3
+Completed: 2 (Movies 1, TV 1)
+Added: 3 (TV 2, no label 1)
 
 Uploaded: 48.2 GiB
 Downloaded: 9.7 GiB
@@ -357,12 +424,14 @@ Torrents: 2887 seeding, 166 with errors
 Errors:
 • tracker.example, 150 torrents: Tracker: [Failure reason "Unregistered torrent"]
 • other.example, 16 torrents: Tracker: [Timeout was reached]
+Unregistered: 150, which /unregistered removes
 
 Free space: 1.2 TiB
 ```
 
 Torrents with errors are grouped by tracker and message. Torrents count as
-added when they first started, which rTorrent remembers across restarts.
+added when they first started, which rTorrent remembers across restarts, and
+what finished and was added is counted per label when torrents have labels.
 Uploaded and Downloaded count torrent data only, from each torrent's own
 totals. rTorrent's global totals, which `/stats` shows, also count the
 protocol messages exchanged with peers: a large library that only seeds
@@ -385,7 +454,8 @@ has not reported where another torrent keeps its data. rTorrent reports `d.base_
 only for torrents it has opened, so unopened torrents are located through
 `d.directory`. It then requires an acknowledged metadata deletion and removes
 the contained local path. If local removal fails after metadata erasure, the bot
-reports that partial outcome explicitly.
+reports that partial outcome explicitly. To remove many torrents with their
+data at once, see [Acting on whole lists](#acting-on-whole-lists).
 
 ## Upgrading to v3
 

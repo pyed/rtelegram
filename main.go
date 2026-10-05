@@ -128,14 +128,15 @@ type application struct {
 	trafficMu    sync.Mutex
 	trafficSaved time.Time
 	transfers    map[string]rtapi.Transfer
-	// uploadMu sends files one at a time.
+	// uploadMu sends files one at a time, and bulkMu does bulk actions so.
 	uploadMu sync.Mutex
+	bulkMu   sync.Mutex
 	// quietMu keeps quiet hours and limit changes from crossing; quietError
 	// is the last error the quiet hours check logged, which it does not repeat.
 	quietMu    sync.Mutex
 	quietError string
-	ignored      map[int64]struct{}
-	wg           sync.WaitGroup
+	ignored    map[int64]struct{}
+	wg         sync.WaitGroup
 }
 
 func main() {
@@ -481,6 +482,14 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.receiveTorrent(ctx, chatID, message, options)
 		return
 	}
+	// A reply to a label picker is a new label.
+	if reply := message.ReplyToMessage; reply != nil && message.Text != "" && !strings.HasPrefix(message.Text, "/") {
+		key := screenKey{chatID, reply.ID}
+		if scr := a.screens.get(key); scr != nil && scr.picking() {
+			a.typedLabel(ctx, chatID, key, scr, message.Text)
+			return
+		}
+	}
 	command, args, ok := parseCommand(message, a.botUsername)
 	if !ok {
 		return
@@ -505,6 +514,12 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 		a.active(ctx, chatID)
 	case "errors", "er":
 		a.errors(ctx, chatID)
+	case "unregistered":
+		a.unregisteredList(ctx, chatID)
+	case "labels":
+		a.labels(ctx, chatID, args)
+	case "setlabel":
+		a.setLabel(ctx, chatID, args)
 	case "sort", "so":
 		a.sort(ctx, chatID, args)
 	case "trackers", "tr":

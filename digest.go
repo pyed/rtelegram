@@ -343,7 +343,7 @@ func (a *application) buildDigest(ctx context.Context, now time.Time, settings d
 	from := uint64(max(since.Unix(), 0))
 	completed := filterTorrents(torrents, func(t *rtapi.Torrent) bool { return t.Finished >= from })
 	added := filterTorrents(torrents, func(t *rtapi.Torrent) bool { return addedAt(t) >= from })
-	fmt.Fprintf(&text, "\nCompleted: %d\nAdded: %d", len(completed), len(added))
+	fmt.Fprintf(&text, "\nCompleted: %d%s\nAdded: %d%s", len(completed), labelBreakdown(completed), len(added), labelBreakdown(added))
 
 	if settings.Since != 0 && counted.Up >= settings.Uploaded && counted.Down >= settings.Downloaded {
 		fmt.Fprintf(&text, "\n\nUploaded: %s\nDownloaded: %s", formatBytes(counted.Up-settings.Uploaded), formatBytes(counted.Down-settings.Downloaded))
@@ -371,12 +371,12 @@ func (a *application) buildDigest(ctx context.Context, now time.Time, settings d
 	}
 	fmt.Fprintf(&text, "\n\nTorrents: %s", strings.Join(parts, ", "))
 	text.WriteString(a.digestErrors(ctx, filterTorrents(torrents, func(t *rtapi.Torrent) bool { return t.State == rtapi.Error })))
+	if count := countUnregistered(torrents); count > 0 {
+		fmt.Fprintf(&text, "\nUnregistered: %d, which /unregistered removes", count)
+	}
 
-	if active := spaceTorrents(torrents); len(active) > 0 {
-		newest := slices.MaxFunc(active, func(x, y *rtapi.Torrent) int { return cmp.Compare(x.Age, y.Age) })
-		if free, err := a.rtorrent.FreeDiskSpaceContext(ctx, newest.Hash); err == nil {
-			fmt.Fprintf(&text, "\n\nFree space: %s", formatBytes(free))
-		}
+	if free, err := a.freeSpace(ctx, torrents); err == nil {
+		fmt.Fprintf(&text, "\n\nFree space: %s", formatBytes(free))
 	}
 	return text.String(), counted, nil
 }

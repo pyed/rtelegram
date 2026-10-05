@@ -35,7 +35,7 @@ type screen struct {
 	list    *listSpec      // a paged list
 	page    int            // the list page shown
 	hash    string         // the torrent a card shows
-	confirm string         // "del" or "deldata" while a card asks for confirmation
+	confirm string         // "del" or "deldata" while a card asks for confirmation, "label" while it picks a label
 	parent  *screen        // the list page a card was opened from
 	notify  bool           // the /notify settings
 	files   string         // the torrent whose files are shown
@@ -43,6 +43,12 @@ type screen struct {
 	file    int            // the file whose card is shown, plus one; 0 for the list
 	limits  bool           // the /limit presets
 	results []searchResult // /find results
+	labels  []string       // the labels /labels has buttons for; "" is no label
+	picks   []string       // the labels a label picker offers
+	bulk    *bulkAction    // a list's bulk actions
+	// cleanup marks a notification with a button that lists the
+	// unregistered torrents.
+	cleanup bool
 }
 
 // screenStore remembers the most recent screens, forgetting the oldest
@@ -113,6 +119,22 @@ var listKinds = map[string]listKind{
 		return strings.Contains(strings.ToLower(torrent.Name), query)
 	}},
 	"latest": {"latest", "latest: No torrents", renderTorrentListWithPrefixes, nil},
+	// A label list's query is the label, as it is; "" lists torrents
+	// without a label.
+	"label": {"labels", "No torrent has this label", renderTorrentListWithPrefixes, func(torrent *rtapi.Torrent, query string) bool {
+		return strings.EqualFold(labelOf(torrent), query)
+	}},
+	"unregistered": {"unregistered", "No unregistered torrents", renderTorrentErrors, func(torrent *rtapi.Torrent, _ string) bool {
+		return unregistered(torrent)
+	}},
+}
+
+// emptyText is the reply when no torrents match spec.
+func (spec listSpec) emptyText() string {
+	if spec.kind == "label" && spec.query == "" {
+		return "Every torrent has a label"
+	}
+	return listKinds[spec.kind].empty
 }
 
 func renderTorrentErrors(torrents rtapi.Torrents, prefixes map[string]string) string {
@@ -156,9 +178,10 @@ func buttonName(name string) string {
 	return string([]rune(name)[:maxButtonRunes-1]) + "…"
 }
 
-// renderList renders one page of a list with a button per torrent. A list
-// that fits on one page reads exactly as it did before buttons.
-func renderList(spec listSpec, torrents rtapi.Torrents, prefixes map[string]string, page int) (string, *models.InlineKeyboardMarkup, int) {
+// renderList renders one page of a list with a button per torrent, and
+// buttons that act on all of them. A list that fits on one page reads
+// exactly as it did before buttons.
+func (a *application) renderList(spec listSpec, torrents rtapi.Torrents, prefixes map[string]string, page int) (string, *models.InlineKeyboardMarkup, int) {
 	pages := (len(torrents) + listPageSize - 1) / listPageSize
 	page = min(max(page, 0), pages-1)
 	shown := torrents[page*listPageSize : min(len(torrents), (page+1)*listPageSize)]
@@ -179,6 +202,21 @@ func renderList(spec listSpec, torrents rtapi.Torrents, prefixes map[string]stri
 		}
 		rows = append(rows, append(nav, button("📄 All", "all")))
 	}
+	switch {
+	case spec.kind == "unregistered":
+		removals := []models.InlineKeyboardButton{button(fmt.Sprintf("🗑 Remove all %d", len(torrents)), "bk:"+bulkDel)}
+		if a.bulkAllows(spec, bulkDelData) {
+			removals = append(removals, button(fmt.Sprintf("💣 Remove all %d + data", len(torrents)), "bk:"+bulkDelData))
+		}
+		rows = append(rows, removals)
+	case len(torrents) > 1:
+		rows = append(rows, []models.InlineKeyboardButton{button(fmt.Sprintf("☰ All %d…", len(torrents)), "bk")})
+	}
+	if spec.kind == "errors" {
+		if count := countUnregistered(torrents); count > 0 {
+			rows = append(rows, []models.InlineKeyboardButton{button(fmt.Sprintf("🧹 %d unregistered", count), "un")})
+		}
+	}
 	return text, &models.InlineKeyboardMarkup{InlineKeyboard: rows}, page
 }
 
@@ -191,10 +229,10 @@ func (a *application) showList(ctx context.Context, chatID int64, spec listSpec)
 		return
 	}
 	if len(torrents) == 0 {
-		a.send(ctx, chatID, kind.empty)
+		a.send(ctx, chatID, spec.emptyText())
 		return
 	}
-	text, keyboard, page := renderList(spec, torrents, prefixes, 0)
+	text, keyboard, page := a.renderList(spec, torrents, prefixes, 0)
 	a.sendScreen(ctx, chatID, text, keyboard, &screen{list: &spec, page: page})
 }
 
@@ -208,6 +246,13 @@ func (a *application) renderCard(torrent *rtapi.Torrent, scr *screen) (string, *
 	case "deldata":
 		return fmt.Sprintf("Remove %s and delete its data from disk? This cannot be undone.", torrent.Name),
 			&models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{button("💣 Delete data", "y:deldata"), button("Cancel", "n")}}}
+	case "label":
+		text := "Choose a label for " + torrent.Name + ", or reply to this message with a new one."
+		if label := labelOf(torrent); label != "" {
+			text += "\nIts label is " + label + "."
+		}
+		rows := renderLabelPicker(scr.picks, labelOf(torrent) != "")
+		return text, &models.InlineKeyboardMarkup{InlineKeyboard: append(rows, []models.InlineKeyboardButton{button("« Back", "n")})}
 	}
 	toggle := button("⏸ Stop", "a:stop")
 	if torrent.State == rtapi.Stopped || torrent.State == rtapi.Complete {
@@ -222,7 +267,7 @@ func (a *application) renderCard(torrent *rtapi.Torrent, scr *screen) (string, *
 		last = append(last, button("« Back", "back"))
 	}
 	return formatTorrentInfo(torrent), &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{toggle, button("🔍 Check", "a:check")}, removals, last,
+		{toggle, button("🔍 Check", "a:check"), button("🏷 Label", "a:label")}, removals, last,
 	}}
 }
 
@@ -340,6 +385,9 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 		parent := *scr
 		return a.redrawCard(ctx, key, &screen{hash: arg, parent: &parent}, "")
 	case "back":
+		if scr.bulk != nil {
+			return a.redrawList(ctx, key, scr.bulk.spec, scr.bulk.page, "")
+		}
 		if scr.files != "" && scr.parent != nil {
 			return a.redrawCard(ctx, key, scr.parent, "")
 		}
@@ -389,9 +437,31 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 		}
 		return a.pressFind(ctx, key, scr, arg)
 	case "n":
+		if scr.hash == "" {
+			break
+		}
 		next := *scr
-		next.confirm = ""
+		next.confirm, next.picks = "", nil
 		return a.redrawCard(ctx, key, &next, "")
+	case "bk":
+		return a.pressBulk(ctx, key, scr, arg)
+	case "ba":
+		return a.pressBulkAction(ctx, key, scr, arg)
+	case "bc":
+		return a.confirmBulk(ctx, key, scr)
+	case "lb":
+		return a.pressLabel(ctx, key, scr, arg)
+	case "lo":
+		if scr.labels == nil {
+			break
+		}
+		return a.pressLabels(ctx, key, scr, arg)
+	case "un":
+		if !scr.cleanup && (scr.list == nil || scr.list.kind != "errors") {
+			break
+		}
+		a.unregisteredList(ctx, key.chatID)
+		return "", false
 	case "a":
 		return a.cardAction(ctx, key, scr, arg)
 	case "nt":
@@ -412,6 +482,15 @@ func (a *application) cardAction(ctx context.Context, key screenKey, scr *screen
 	if action == "del" || action == "deldata" {
 		next := *scr
 		next.confirm = action
+		return a.redrawCard(ctx, key, &next, "")
+	}
+	if action == "label" {
+		all, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
+		if err != nil {
+			return err.Error(), true
+		}
+		next := *scr
+		next.confirm, next.picks = "label", labelChoices(all)
 		return a.redrawCard(ctx, key, &next, "")
 	}
 	torrent, err := a.rtorrent.GetTorrentContext(ctx, scr.hash)
@@ -481,7 +560,7 @@ func (a *application) redrawList(ctx context.Context, key screenKey, spec listSp
 	if len(torrents) == 0 {
 		// After a removal empties the list, say what was removed: "No
 		// matches" would read as though the search had found nothing.
-		text := listKinds[spec.kind].empty
+		text := spec.emptyText()
 		if toast != "" {
 			text = toast
 		}
@@ -491,7 +570,7 @@ func (a *application) redrawList(ctx context.Context, key screenKey, spec listSp
 		}
 		return toast, false
 	}
-	text, keyboard, page := renderList(spec, torrents, prefixes, page)
+	text, keyboard, page := a.renderList(spec, torrents, prefixes, page)
 	if err := a.editScreen(ctx, key, text, keyboard); err != nil {
 		return err.Error(), true
 	}

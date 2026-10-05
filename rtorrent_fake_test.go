@@ -38,8 +38,11 @@ type fakeRtorrent struct {
 	onCall func(method string)
 	// refuseLimits makes setting the global limits fail.
 	refuseLimits bool
-	requests     []string
-	calls        []fakeCall
+	// faults are the calls answered with a fault: a method, or a method and
+	// a torrent's hash, as "d.erase HASH".
+	faults   map[string]bool
+	requests []string
+	calls    []fakeCall
 }
 
 type fakeCall struct {
@@ -232,6 +235,9 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 	if f.onCall != nil {
 		f.onCall(method)
 	}
+	if f.faults[method] {
+		return xmlrpcFault(-503, "refused"), true
+	}
 	switch method {
 	case "system.client_version":
 		return xmlrpcString("0.9.8"), false
@@ -303,6 +309,9 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		return xmlrpcFault(-501, "Could not find info-hash."), true
 	}
 	torrent := f.torrents[index]
+	if f.faults[method+" "+torrent.Hash] {
+		return xmlrpcFault(-503, "refused"), true
+	}
 	switch method {
 	case "t.url":
 		if torrent.Tracker == nil {
@@ -403,6 +412,8 @@ func (f *fakeRtorrent) field(torrent *rtapi.Torrent, name string) string {
 		return xmlrpcInt(int64(torrent.Finished))
 	case "d.timestamp.started":
 		return xmlrpcInt(int64(torrent.Started))
+	case "d.is_private":
+		return flag(torrent.Private)
 	case "d.down.total":
 		return xmlrpcInt(int64(f.downTotal[torrent.Hash]))
 	case "p.multicall=,p.is_incoming":

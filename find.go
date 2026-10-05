@@ -431,7 +431,7 @@ func (a *application) checkWatches(ctx context.Context) {
 			ruleCtx = context.WithValue(ctx, messageThreadIDKey{}, rule.Thread)
 		}
 		for _, result := range fresh {
-			a.grab(ruleCtx, rule.ChatID, "watch "+rule.Name, result, rtapi.DotTorrentWithOptions{Dir: rule.Dir, Label: rule.Label})
+			a.grab(ruleCtx, rule.ChatID, "watch "+rule.Name, result, rtapi.DotTorrentWithOptions{Dir: rule.Dir, Label: encodeLabel(rule.Label)})
 		}
 	}
 }

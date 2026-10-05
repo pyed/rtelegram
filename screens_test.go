@@ -103,7 +103,9 @@ func TestListsPageWithButtons(t *testing.T) {
 	if !strings.HasSuffix(first.text, "Page 1 of 3, 25 torrents") || !strings.Contains(first.text, "torrent 10") || strings.Contains(first.text, "torrent 11") {
 		t.Fatalf("first page = %q", first.text)
 	}
-	if got := len(first.buttons); got != 11 || hasButton(first.buttons, "◀") || !hasButton(first.buttons, "▶") || !hasButton(first.buttons, "📄 All") {
+	// Ten torrents, the pages, and a row to act on all 25.
+	if got := len(first.buttons); got != 12 || hasButton(first.buttons, "◀") || !hasButton(first.buttons, "▶") || !hasButton(first.buttons, "📄 All") ||
+		!hasButton(first.buttons, "☰ All 25…") {
 		t.Fatalf("first page buttons = %v", buttonTexts(first.buttons))
 	}
 
@@ -115,7 +117,7 @@ func TestListsPageWithButtons(t *testing.T) {
 
 	press(app, master, first.messageID, "pg:2")
 	last := lastEdit(t, telegramFake)
-	if !strings.Contains(last.text, "torrent 25") || len(last.buttons) != 6 || hasButton(last.buttons, "▶") {
+	if !strings.Contains(last.text, "torrent 25") || len(last.buttons) != 7 || hasButton(last.buttons, "▶") {
 		t.Fatalf("last page = %q %v", last.text, buttonTexts(last.buttons))
 	}
 
