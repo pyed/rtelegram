@@ -153,7 +153,7 @@ func TestStalledDownloadsAreAnnouncedOnce(t *testing.T) {
 	}
 	app.checkEvents(ctx, w, start.Add(31*time.Minute))
 	app.checkEvents(ctx, w, start.Add(40*time.Minute))
-	if sent := drain(telegramFake); len(sent) != 1 || sent[0] != "🐢 Stalled: slow\nNo progress for 31m0s, at 10.0%" {
+	if sent := drain(telegramFake); len(sent) != 1 || sent[0] != "🐢 Stalled: slow\nNo progress for 31m, at 10.0%" {
 		t.Fatalf("stall announcements = %q", sent)
 	}
 
@@ -448,8 +448,8 @@ func TestManyEventsComeInOneMessage(t *testing.T) {
 
 	app.checkEvents(ctx, w, start.Add(31*time.Minute))
 	stalled := drain(telegramFake)
-	if len(stalled) != 1 || !strings.HasPrefix(stalled[0], "🐢 Stalled: 5 downloads\n• download 07, at 50.0%, no progress for 31m0s\n") ||
-		!strings.HasSuffix(stalled[0], "\n• download 11, at 50.0%, no progress for 31m0s") {
+	if len(stalled) != 1 || !strings.HasPrefix(stalled[0], "🐢 Stalled: 5 downloads\n• download 07, at 50.0%, no progress for 31m\n") ||
+		!strings.HasSuffix(stalled[0], "\n• download 11, at 50.0%, no progress for 31m") {
 		t.Fatalf("five stalls = %q", stalled)
 	}
 }
@@ -640,5 +640,87 @@ func TestErrorHoldsEndWhenNobodyWantsErrors(t *testing.T) {
 	setError(1)
 	if sent := at(3); len(sent) != 1 || sent[0] != "⚠️ Error: second\nTracker: [Timeout was reached]" {
 		t.Fatalf("after turning errors off and on = %q", sent)
+	}
+}
+
+// Chats are told when rTorrent has not answered for a minute, when it
+// answers again, and when it restarted, which they learn from its process
+// ID; a moment without an answer is not an outage.
+func TestRTorrentOutagesAndRestartsAreAnnounced(t *testing.T) {
+	app, telegramFake, rtorrentFake := buttonApp(t, handlerTorrents())
+	subscribe(t, app, 111, eventRtorrent, eventCompleted)
+	answering := func(on bool) {
+		rtorrentFake.set(func(f *fakeRtorrent) { f.faults = map[string]bool{"system.pid": !on, "d.multicall2": !on} })
+	}
+	ctx, w := context.Background(), &watcher{}
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	at := func(seconds int) []string {
+		app.checkEvents(ctx, w, start.Add(time.Duration(seconds)*time.Second))
+		return drain(telegramFake)
+	}
+	at(0)
+
+	answering(false)
+	at(30)
+	answering(true)
+	if sent := at(60); len(sent) != 0 {
+		t.Fatalf("after one unanswered check = %q", sent)
+	}
+
+	answering(false)
+	if sent := at(90); len(sent) != 0 {
+		t.Fatalf("at first = %q", sent)
+	}
+	if sent := at(150); len(sent) != 1 || !strings.HasPrefix(sent[0], "🔴 rTorrent is not answering: ") {
+		t.Fatalf("after a minute = %q", sent)
+	}
+	// While rTorrent is down, the watcher asks it nothing more.
+	lists := len(rtorrentFake.called("d.multicall2"))
+	if sent := at(180); len(sent) != 0 || len(rtorrentFake.called("d.multicall2")) != lists {
+		t.Fatalf("still down = %q", sent)
+	}
+	answering(true)
+	rtorrentFake.set(func(f *fakeRtorrent) { f.pid = 5678 })
+	if sent := at(390); len(sent) != 1 || sent[0] != "🟢 rTorrent is answering again, after 5m. It restarted." {
+		t.Fatalf("back = %q", sent)
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.torrents[1].Finished = 9000 })
+	if sent := at(420); len(sent) != 1 || !strings.HasPrefix(sent[0], "✅ Completed: Ubuntu") {
+		t.Fatalf("once back, other events = %q", sent)
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.pid = 9999 })
+	if sent := at(450); len(sent) != 1 || sent[0] != "🔄 rTorrent restarted." {
+		t.Fatalf("a restart between checks = %q", sent)
+	}
+
+	// Back without having restarted.
+	answering(false)
+	at(480)
+	if sent := at(540); len(sent) != 1 || !strings.HasPrefix(sent[0], "🔴 rTorrent is not answering: ") {
+		t.Fatalf("down again = %q", sent)
+	}
+	answering(true)
+	if sent := at(600); len(sent) != 1 || sent[0] != "🟢 rTorrent is answering again, after 2m." {
+		t.Fatalf("back without a restart = %q", sent)
+	}
+
+	// Chats that do not want to know are not told, and the watcher does not
+	// ask rTorrent for its process ID for them.
+	subscribe(t, app, 111, eventCompleted)
+	before := len(rtorrentFake.called("system.pid"))
+	rtorrentFake.set(func(f *fakeRtorrent) { f.pid = 1 })
+	if sent := at(630); len(sent) != 0 || len(rtorrentFake.called("system.pid")) != before {
+		t.Fatalf("without the subscription = %q", sent)
+	}
+}
+
+func TestFormatMinutes(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		0: "0m", 29 * time.Second: "0m", 31 * time.Second: "1m", 59 * time.Minute: "59m",
+		time.Hour: "1h", 90 * time.Minute: "1h30m", 25*time.Hour + time.Minute: "25h1m",
+	} {
+		if got := formatMinutes(d); got != want {
+			t.Errorf("formatMinutes(%s) = %q, want %q", d, got, want)
+		}
 	}
 }

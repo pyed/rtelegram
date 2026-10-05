@@ -19,6 +19,7 @@ const (
 	eventErrors    = "errors"
 	eventStalled   = "stalled"
 	eventDisk      = "disk"
+	eventRtorrent  = "rtorrent"
 
 	defaultWatchInterval = 30 * time.Second
 	defaultStallAfter    = 30 * time.Minute
@@ -37,6 +38,9 @@ const (
 	// such errors keep coming, up to maxErrorHold.
 	errorHold    = time.Hour
 	maxErrorHold = 24 * time.Hour
+	// downAfter is how long rTorrent must fail to answer before chats are
+	// told, so that a busy moment is not an outage.
+	downAfter = time.Minute
 )
 
 // notifyEvents are the events a chat can subscribe to, as /notify lists them.
@@ -45,6 +49,7 @@ var notifyEvents = []struct{ name, label string }{
 	{eventErrors, "New errors"},
 	{eventStalled, "Stalled downloads"},
 	{eventDisk, "Low disk space"},
+	{eventRtorrent, "rTorrent down or restarted"},
 }
 
 // An event is something the watcher noticed.
@@ -69,6 +74,12 @@ type watcher struct {
 	lastError string
 	// notices hold back new errors like ones announced lately.
 	notices map[errorKey]*errorNotice
+	// pid is rTorrent's process ID at the last look, 0 before the first;
+	// downSince is when rTorrent stopped answering, and downTold whether
+	// chats were told.
+	pid       int
+	downSince time.Time
+	downTold  bool
 }
 
 // errorKey is what errors are grouped by: the tracker, and its message.
@@ -122,6 +133,13 @@ func (a *application) checkEvents(ctx context.Context, w *watcher, now time.Time
 			a.logger.Printf("[ERROR] saving completed torrents: %s", err)
 		}
 	}
+	if a.wants(eventRtorrent) {
+		events, up := a.healthEvents(ctx, w, now)
+		a.deliver(ctx, events)
+		if !up {
+			return
+		}
+	}
 	torrents, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
 	if err != nil {
 		if ctx.Err() == nil && err.Error() != w.lastError {
@@ -138,6 +156,42 @@ func (a *application) checkEvents(ctx context.Context, w *watcher, now time.Time
 	events = append(events, a.diskEvents(ctx, w, torrents)...)
 	w.started = true
 	a.deliver(ctx, events)
+}
+
+// healthEvents tells when rTorrent has not answered for downAfter, when it
+// answers again, and when it has restarted, which changes its process ID.
+// It reports whether rTorrent answered.
+func (a *application) healthEvents(ctx context.Context, w *watcher, now time.Time) ([]event, bool) {
+	stats, err := a.rtorrent.StatsContext(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, false
+		}
+		if w.downSince.IsZero() {
+			w.downSince = now
+		}
+		if w.downTold || now.Sub(w.downSince) < downAfter {
+			return nil, false
+		}
+		w.downTold = true
+		a.logger.Printf("[ERROR] rTorrent is not answering: %s", err)
+		return []event{{kind: eventRtorrent, text: "🔴 rTorrent is not answering: " + err.Error()}}, false
+	}
+	restarted := w.pid != 0 && stats.PID != w.pid
+	var events []event
+	switch {
+	case w.downTold:
+		text := fmt.Sprintf("🟢 rTorrent is answering again, after %s.", formatMinutes(now.Sub(w.downSince)))
+		if restarted {
+			text += " It restarted."
+		}
+		a.logger.Printf("[INFO] rTorrent is answering again")
+		events = append(events, event{kind: eventRtorrent, text: text})
+	case restarted:
+		events = append(events, event{kind: eventRtorrent, text: "🔄 rTorrent restarted."})
+	}
+	w.pid, w.downSince, w.downTold = stats.PID, time.Time{}, false
+	return events, true
 }
 
 // together returns events of one kind as they are, or, when there are more
@@ -242,7 +296,7 @@ func (w *watcher) torrentEvents(torrents rtapi.Torrents, now time.Time, stallAft
 			mark = progressMark{completed: torrent.Completed, since: now}
 		case !mark.announced && now.Sub(mark.since) >= stallAfter:
 			mark.announced = true
-			stalled := now.Sub(mark.since).Round(time.Minute)
+			stalled := formatMinutes(now.Sub(mark.since))
 			events = append(events, event{kind: eventStalled,
 				text: fmt.Sprintf("🐢 Stalled: %s\nNo progress for %s, at %s", torrent.Name, stalled, torrent.Percent),
 				line: fmt.Sprintf("%s, at %s, no progress for %s", torrent.Name, torrent.Percent, stalled), hash: torrent.Hash})

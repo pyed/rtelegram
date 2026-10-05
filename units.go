@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // parseSize reads a size in binary units: 1024, 500K, 5M, 1.5G, 2T, with an
@@ -29,4 +30,16 @@ func parseSize(text string) (uint64, error) {
 		return 0, errors.New("size is too large")
 	}
 	return uint64(bytes), nil
+}
+
+// formatMinutes writes a duration to the minute: 5m, 1h30m, or 2h.
+func formatMinutes(d time.Duration) string {
+	minutes := int(d.Round(time.Minute) / time.Minute)
+	switch {
+	case minutes < 60:
+		return strconv.Itoa(minutes) + "m"
+	case minutes%60 == 0:
+		return strconv.Itoa(minutes/60) + "h"
+	}
+	return strconv.Itoa(minutes/60) + "h" + strconv.Itoa(minutes%60) + "m"
 }

@@ -385,6 +385,9 @@ about. Each is a button to turn on or off:
 - **Stalled downloads**, when a download makes no progress for `-stall-after`.
 - **Low disk space**, when free space where rTorrent saves data drops below
   `-low-disk`. The bot warns again only after space recovers.
+- **rTorrent down or restarted**: when rTorrent has not answered for a minute,
+  when it answers again and after how long, and when it restarted, which the
+  bot tells from its process ID, even between two checks.
 
 `/notify on` and `/notify off` turn everything on or off at once. In a group
 with topics, notifications go to the topic `/notify` was sent from.
