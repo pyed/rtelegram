@@ -128,6 +128,8 @@ type application struct {
 	trafficMu    sync.Mutex
 	trafficSaved time.Time
 	transfers    map[string]rtapi.Transfer
+	// uploadMu sends files one at a time.
+	uploadMu sync.Mutex
 	ignored      map[int64]struct{}
 	wg           sync.WaitGroup
 }
@@ -179,7 +181,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		logger.SetOutput(logFile)
 	}
 
-	httpClient := &http.Client{Timeout: 70 * time.Second}
+	httpClient := telegramClient{client: &http.Client{}, request: telegramTimeout, upload: uploadTimeout}
 	var app *application
 	b, err := telegram.New(cfg.token,
 		telegram.WithSkipGetMe(),

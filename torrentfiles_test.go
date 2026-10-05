@@ -185,7 +185,11 @@ func TestGetSendsFinishedFilesInsideTheDataRoot(t *testing.T) {
 	torrent, files := showTorrent(t, root)
 	app, telegramFake, _ := fileApp(t, root, torrent, files)
 
-	command(app, "get aaaaaaa 1")
+	// The file goes in the background, so the bot goes on answering.
+	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 1"); got != "Sending e01.mkv (11 B)…" {
+		t.Fatalf("get aaaaaaa 1 = %q", got)
+	}
+	app.wg.Wait()
 	if len(telegramFake.documents) != 1 || telegramFake.documents[0].filename != "e01.mkv" || telegramFake.documents[0].content != "episode one" {
 		t.Fatalf("documents = %+v", telegramFake.documents)
 	}
@@ -217,7 +221,8 @@ func TestGetSendsFinishedFilesInsideTheDataRoot(t *testing.T) {
 		t.Fatalf("finished file's card = %q %v", card.text, buttonTexts(card.buttons))
 	}
 	press(app, master, choose.messageID, "fg:0")
-	if len(telegramFake.documents) != 2 || lastAnswer(t, telegramFake).text != "Sent e01.mkv" {
+	app.wg.Wait()
+	if len(telegramFake.documents) != 2 || lastAnswer(t, telegramFake).text != "Sending e01.mkv…" {
 		t.Fatalf("documents = %d, answer %+v", len(telegramFake.documents), lastAnswer(t, telegramFake))
 	}
 }
@@ -231,6 +236,7 @@ func TestGetSendsASingleFileTorrentWithoutANumber(t *testing.T) {
 	torrent := &rtapi.Torrent{Name: "movie.mkv", Hash: strings.Repeat("A", 40), State: rtapi.Seeding, Path: movie, Directory: root}
 	app, telegramFake, _ := fileApp(t, root, torrent, []rtapi.File{{Path: "movie.mkv", Size: 4, Chunks: 1, CompletedChunks: 1, Priority: rtapi.FileNormal}})
 	command(app, "get aaaaaaa")
+	app.wg.Wait()
 	if len(telegramFake.documents) != 1 || telegramFake.documents[0].content != "film" {
 		t.Fatalf("documents = %+v", telegramFake.documents)
 	}
@@ -267,5 +273,23 @@ func TestGetRefusesWithoutADataRootOrOutsideIt(t *testing.T) {
 	}
 	if len(telegramFake.documents) != 0 {
 		t.Fatal("a file outside -data-root was sent")
+	}
+}
+
+// A file that cannot be read when its turn comes is reported in the chat,
+// since the reply that it was being sent has already gone.
+func TestGetSaysWhenSendingFails(t *testing.T) {
+	root := t.TempDir()
+	torrent, files := showTorrent(t, root)
+	app, telegramFake, _ := fileApp(t, root, torrent, files)
+	if err := os.Remove(filepath.Join(root, "show", "e01.mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastSentText(t, telegramFake, app, "get aaaaaaa 1"); got != "Sending e01.mkv (11 B)…" {
+		t.Fatalf("get aaaaaaa 1 = %q", got)
+	}
+	app.wg.Wait()
+	if failed := nextSent(t, telegramFake).text; !strings.HasPrefix(failed, "get: read e01.mkv: ") {
+		t.Fatalf("failure = %q", failed)
 	}
 }

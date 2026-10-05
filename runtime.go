@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
@@ -14,6 +16,50 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/pyed/rtapi"
 )
+
+const (
+	// telegramTimeout bounds a request to Telegram; getUpdates waits up to a
+	// minute for updates, so a little longer than that.
+	telegramTimeout = 70 * time.Second
+	// uploadTimeout bounds sending a file, which takes minutes on a slow
+	// uplink: 50 MB at 1 Mbit/s takes about seven.
+	uploadTimeout = 15 * time.Minute
+)
+
+// telegramClient gives each request to Telegram its own deadline, a longer
+// one for sending files: one timeout for the whole client cut uploads short
+// on slow uplinks.
+type telegramClient struct {
+	client          *http.Client
+	request, upload time.Duration
+}
+
+func (c telegramClient) Do(request *http.Request) (*http.Response, error) {
+	timeout := c.request
+	if strings.HasSuffix(request.URL.Path, "/sendDocument") {
+		timeout = c.upload
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), timeout)
+	response, err := c.client.Do(request.WithContext(ctx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	// The deadline holds until the body has been read and closed.
+	response.Body = cancelOnClose{response.Body, cancel}
+	return response, nil
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
+}
 
 func (a *application) launch(ctx context.Context, fn func(context.Context)) {
 	a.wg.Add(1)

@@ -283,9 +283,13 @@ func (a *application) get(ctx context.Context, chatID int64, arguments []string)
 		a.sendScreen(ctx, chatID, "Files marked 📥 can be sent.\n\n"+text, keyboard, &screen{files: torrent.Hash, page: page})
 		return
 	}
-	if err := a.upload(ctx, chatID, torrent, files[index]); err != nil {
+	file := files[index]
+	if _, err := a.checkUpload(torrent, file); err != nil {
 		a.send(ctx, chatID, "get: "+err.Error())
+		return
 	}
+	a.send(ctx, chatID, fmt.Sprintf("Sending %s (%s)…", path.Base(file.Path), formatBytes(file.Size)))
+	a.uploadLater(ctx, chatID, torrent, file)
 }
 
 // pressGet sends the file a 📥 button names.
@@ -302,33 +306,60 @@ func (a *application) pressGet(ctx context.Context, key screenKey, scr *screen, 
 	if err != nil || index < 0 || index >= len(files) {
 		return "This button no longer applies.", true
 	}
-	if err := a.upload(ctx, key.chatID, torrent, files[index]); err != nil {
+	if _, err := a.checkUpload(torrent, files[index]); err != nil {
 		return err.Error(), true
 	}
-	return "Sent " + path.Base(files[index].Path), false
+	a.uploadLater(ctx, key.chatID, torrent, files[index])
+	return "Sending " + path.Base(files[index].Path) + "…", false
+}
+
+// uploadLater sends a file in the background, so the bot goes on answering
+// while a large file crosses a slow uplink, and says if it fails. Files go
+// one at a time.
+func (a *application) uploadLater(ctx context.Context, chatID int64, torrent *rtapi.Torrent, file rtapi.File) {
+	a.launch(ctx, func(uploadCtx context.Context) {
+		a.uploadMu.Lock()
+		defer a.uploadMu.Unlock()
+		if err := a.upload(uploadCtx, chatID, torrent, file); err != nil && uploadCtx.Err() == nil {
+			a.send(uploadCtx, chatID, "get: "+err.Error())
+		}
+	})
+}
+
+// fileLocation returns where a torrent's file is on this machine, as
+// rTorrent reports it, or "" when it has not said.
+func fileLocation(torrent *rtapi.Torrent, file rtapi.File) string {
+	location := dataPath(torrent)
+	if location != "" && torrent.MultiFile {
+		location = filepath.Join(location, filepath.FromSlash(file.Path))
+	}
+	return location
+}
+
+// checkUpload reports why a file cannot be sent, if it cannot, and returns
+// its path inside -data-root.
+func (a *application) checkUpload(torrent *rtapi.Torrent, file rtapi.File) (string, error) {
+	if a.dataRoot == "" {
+		return "", errors.New("sending files is off; set -data-root to the directory on this machine where rTorrent keeps data")
+	}
+	if !file.Complete() {
+		return "", fmt.Errorf("%s has not finished downloading", file.Path)
+	}
+	if file.Size > maxUploadSize {
+		return "", fmt.Errorf("%s is %s, more than the 50 MB Telegram lets bots send", file.Path, formatBytes(file.Size))
+	}
+	location := fileLocation(torrent, file)
+	if location == "" {
+		return "", errors.New("rTorrent has not reported where this torrent keeps its data")
+	}
+	return containedRelative(a.dataRoot, location)
 }
 
 // upload sends one finished file of a torrent from disk. The file must be
 // inside -data-root, and is opened through it so symbolic links cannot lead
 // outside.
 func (a *application) upload(ctx context.Context, chatID int64, torrent *rtapi.Torrent, file rtapi.File) error {
-	if a.dataRoot == "" {
-		return errors.New("sending files is off; set -data-root to the directory on this machine where rTorrent keeps data")
-	}
-	if !file.Complete() {
-		return fmt.Errorf("%s has not finished downloading", file.Path)
-	}
-	if file.Size > maxUploadSize {
-		return fmt.Errorf("%s is %s, more than the 50 MB Telegram lets bots send", file.Path, formatBytes(file.Size))
-	}
-	location := dataPath(torrent)
-	if location == "" {
-		return errors.New("rTorrent has not reported where this torrent keeps its data")
-	}
-	if torrent.MultiFile {
-		location = filepath.Join(location, filepath.FromSlash(file.Path))
-	}
-	relative, err := containedRelative(a.dataRoot, location)
+	relative, err := a.checkUpload(torrent, file)
 	if err != nil {
 		return err
 	}

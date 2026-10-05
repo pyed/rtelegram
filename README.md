@@ -270,7 +270,8 @@ When rtelegram can reach rTorrent's data (see `-data-root`), finished files up
 to 50 MB (Telegram's limit for bots) are marked 📥, and their cards have a
 📥 Send button. `/get HASH N` sends file N directly; a single-file torrent
 needs no N. Files are read only from inside `-data-root`, and symbolic links
-cannot lead outside it.
+cannot lead outside it. They go one at a time in the background, so the bot
+goes on answering, and each may take up to 15 minutes on a slow uplink.
 
 ## Find and watch
 

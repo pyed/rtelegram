@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +168,48 @@ func TestMigratedToReadsTheNewChat(t *testing.T) {
 	}
 	if got := migratedTo(errors.New("bad request, Bad Request: chat not found")); got != 0 {
 		t.Errorf("from another error: %d", got)
+	}
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+// Each request to Telegram has its own deadline, a long one for sending a
+// file, which holds while the answer is read and ends when it is closed.
+func TestTelegramClientGivesUploadsLongerDeadlines(t *testing.T) {
+	left := make(map[string]time.Duration)
+	var last context.Context
+	client := telegramClient{client: &http.Client{Transport: roundTripper(func(request *http.Request) (*http.Response, error) {
+		deadline, ok := request.Context().Deadline()
+		if !ok {
+			t.Errorf("%s has no deadline", request.URL.Path)
+		}
+		left[path.Base(request.URL.Path)], last = time.Until(deadline), request.Context()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Header: make(http.Header)}, nil
+	})}, request: time.Minute, upload: 15 * time.Minute}
+
+	for _, method := range []string{"sendMessage", "sendDocument"} {
+		request, err := http.NewRequest(http.MethodPost, "https://api.telegram.org/bot123:SECRET/"+method, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body, err := io.ReadAll(response.Body); err != nil || string(body) != `{"ok":true}` || last.Err() != nil {
+			t.Fatalf("%s: read %q, %v; deadline %v", method, body, err, last.Err())
+		}
+		response.Body.Close()
+		if last.Err() == nil {
+			t.Fatalf("%s: the deadline outlived the answer", method)
+		}
+	}
+	if d := left["sendMessage"]; d <= 50*time.Second || d > time.Minute {
+		t.Errorf("sendMessage had %s", d)
+	}
+	if d := left["sendDocument"]; d <= 14*time.Minute || d > 15*time.Minute {
+		t.Errorf("sendDocument had %s", d)
 	}
 }
