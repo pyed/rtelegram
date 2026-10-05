@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +100,22 @@ func TestLabelsListsEachLabelAndItsTorrents(t *testing.T) {
 	}
 	if got := lastSentText(t, telegramFake, app, "labels Music"); got != "No torrent has this label" {
 		t.Errorf("labels Music = %q", got)
+	}
+}
+
+// Every label is listed, but only the first maxLabelButtons have buttons.
+func TestLabelsListsManyLabels(t *testing.T) {
+	var torrents rtapi.Torrents
+	for i := range maxLabelButtons + 2 {
+		torrents = append(torrents, &rtapi.Torrent{Name: fmt.Sprint("t", i), Hash: fmt.Sprintf("%02X%038X", i, 0), State: rtapi.Seeding, Label: fmt.Sprintf("label %02d", i)})
+	}
+	app, telegramFake, _ := buttonApp(t, torrents)
+	command(app, "labels")
+	labels := nextSent(t, telegramFake)
+	buttons := buttonTexts(labels.buttons)
+	if len(buttons) != maxLabelButtons || !strings.HasSuffix(buttons[len(buttons)-1], fmt.Sprintf("=lo:%d", maxLabelButtons-1)) ||
+		!strings.Contains(labels.text, fmt.Sprintf("\nlabel %02d: 1\n", maxLabelButtons+1)) {
+		t.Fatalf("labels = %q, buttons %v", labels.text, buttons)
 	}
 }
 

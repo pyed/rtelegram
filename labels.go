@@ -166,7 +166,7 @@ func (a *application) labels(ctx context.Context, chatID int64, arguments []stri
 			name = "No label"
 		}
 		fmt.Fprintf(&text, "\n%s: %d", name, counts[label])
-		if i == maxLabelButtons {
+		if i >= maxLabelButtons {
 			continue
 		}
 		row = append(row, button(fmt.Sprintf("%s (%d)", buttonName(name), counts[label]), "lo:"+strconv.Itoa(i)))
@@ -178,7 +178,7 @@ func (a *application) labels(ctx context.Context, chatID int64, arguments []stri
 		rows = append(rows, row)
 	}
 	text.WriteString("\n\nTap a label to list its torrents.")
-	a.sendScreen(ctx, chatID, text.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}, &screen{labels: labels[:min(len(labels), maxLabelButtons)]})
+	a.sendScreen(ctx, chatID, text.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}, &screen{labels: labels})
 }
 
 // pressLabels lists the torrents with the label a /labels button names.

@@ -22,10 +22,10 @@ import (
 // statusInterval is how often status messages are brought up to date.
 const statusInterval = time.Minute
 
-// statusMessage is a chat's status message.
+// statusMessage is a chat's status message. Edits find it wherever it is,
+// forum topics included.
 type statusMessage struct {
 	Message int `json:"message"`
-	Thread  int `json:"thread,omitempty"`
 }
 
 func statusKeyboard() *models.InlineKeyboardMarkup {
@@ -55,12 +55,11 @@ func (a *application) status(ctx context.Context, chatID int64, arguments []stri
 	if err != nil || key.messageID == 0 {
 		return
 	}
-	thread, _ := ctx.Value(messageThreadIDKey{}).(int)
 	if err := a.state.update(func(data *stateData) {
 		if data.Status == nil {
 			data.Status = make(map[int64]statusMessage)
 		}
-		data.Status[key.chatID] = statusMessage{Message: key.messageID, Thread: thread}
+		data.Status[key.chatID] = statusMessage{Message: key.messageID}
 	}); err != nil {
 		a.logger.Printf("[ERROR] saving the status message: %s", err)
 	}
