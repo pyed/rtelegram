@@ -218,10 +218,44 @@ func TestLowDiskSpaceIsAnnouncedWithHysteresis(t *testing.T) {
 	}
 
 	app.lowDisk = 0
+	rtorrentFake.set(func(f *fakeRtorrent) { f.torrents = handlerTorrents() })
 	before := len(rtorrentFake.called("d.free_diskspace"))
 	app.checkEvents(ctx, w, time.Now())
 	if after := len(rtorrentFake.called("d.free_diskspace")); after != before {
 		t.Fatal("disk space was checked with -low-disk 0")
+	}
+}
+
+// The watcher asks rTorrent only for what subscribed chats want: free space
+// where downloads land, in one request, and the trackers of new errors.
+func TestWatcherAsksOnlyForWhatChatsWant(t *testing.T) {
+	var torrents rtapi.Torrents
+	for i := range 12 {
+		torrents = append(torrents, &rtapi.Torrent{Name: fmt.Sprint("download ", i), Hash: fmt.Sprintf("%040X", i), State: rtapi.Leeching})
+	}
+	app, telegramFake, rtorrentFake := buttonApp(t, torrents)
+	app.lowDisk = 5 << 30
+	// Downloads may land on different disks; the fullest counts.
+	rtorrentFake.set(func(f *fakeRtorrent) { f.freeSpace, f.spaceOf = 9<<30, map[string]uint64{torrents[9].Hash: 1 << 30} })
+	subscribe(t, app, 111, eventCompleted)
+	ctx := context.Background()
+	w := &watcher{}
+	app.checkEvents(ctx, w, time.Now())
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.torrents[0].State, f.torrents[0].Message = rtapi.Error, "Unregistered torrent"
+	})
+	app.checkEvents(ctx, w, time.Now())
+	if calls := rtorrentFake.called("d.free_diskspace", "t.url"); len(calls) != 0 {
+		t.Fatalf("calls for events nobody wants: %v", calls)
+	}
+
+	subscribe(t, app, 111, eventDisk)
+	app.checkEvents(ctx, w, time.Now())
+	if requests, calls := rtorrentFake.requestsContaining("d.free_diskspace"), rtorrentFake.called("d.free_diskspace"); len(requests) != 1 || len(calls) != maxDiskChecks {
+		t.Fatalf("free space asked in %d requests with %d calls", len(requests), len(calls))
+	}
+	if sent := drain(telegramFake); len(sent) != 1 || !strings.Contains(sent[0], "1.0 GiB free") {
+		t.Fatalf("low disk = %q", sent)
 	}
 }
 
@@ -571,5 +605,40 @@ func TestAnErrorThatChangesWhileItWaitsComesOnce(t *testing.T) {
 	}
 	if sent := at(62); len(sent) != 0 {
 		t.Fatalf("came again: %q", sent)
+	}
+}
+
+// Turning error notifications off forgets the errors held back, so once they
+// are on again, the next error comes at once.
+func TestErrorHoldsEndWhenNobodyWantsErrors(t *testing.T) {
+	tracker, _ := url.Parse("https://tracker.example/announce")
+	app, telegramFake, rtorrentFake := buttonApp(t, rtapi.Torrents{
+		{Name: "first", Hash: strings.Repeat("A", 40), State: rtapi.Seeding, Tracker: tracker},
+		{Name: "second", Hash: strings.Repeat("B", 40), State: rtapi.Seeding, Tracker: tracker},
+	})
+	subscribe(t, app, 111, eventErrors)
+	ctx := context.Background()
+	w := &watcher{}
+	start := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	at := func(minute int) []string {
+		app.checkEvents(ctx, w, start.Add(time.Duration(minute)*time.Minute))
+		return drain(telegramFake)
+	}
+	setError := func(i int) {
+		rtorrentFake.set(func(f *fakeRtorrent) {
+			f.torrents[i].State, f.torrents[i].Message = rtapi.Error, "Tracker: [Timeout was reached]"
+		})
+	}
+	at(0)
+	setError(0)
+	if sent := at(1); len(sent) != 1 {
+		t.Fatalf("the first error = %q", sent)
+	}
+	subscribe(t, app, 111, eventCompleted)
+	at(2)
+	subscribe(t, app, 111, eventErrors)
+	setError(1)
+	if sent := at(3); len(sent) != 1 || sent[0] != "⚠️ Error: second\nTracker: [Timeout was reached]" {
+		t.Fatalf("after turning errors off and on = %q", sent)
 	}
 }

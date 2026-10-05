@@ -30,6 +30,7 @@ type fakeRtorrent struct {
 	peers     map[string][]bool       // each torrent's peers, true for incoming
 	pid       int                     // system.pid, which a restart changes
 	freeSpace uint64                  // d.free_diskspace for every active torrent
+	spaceOf   map[string]uint64       // d.free_diskspace for some, by hash
 	files     map[string][]rtapi.File // by torrent hash
 	load      func(body string) *rtapi.Torrent
 	stall     chan struct{} // when set, requests wait until it is closed
@@ -318,6 +319,9 @@ func (f *fakeRtorrent) call(method string, args []string, body string) (string, 
 		// torrent; active torrents are open, and the rest here are not.
 		if torrent.State != rtapi.Leeching && torrent.State != rtapi.Seeding && torrent.State != rtapi.Error {
 			return xmlrpcInt(0), false
+		}
+		if space, ok := f.spaceOf[torrent.Hash]; ok {
+			return xmlrpcInt(int64(space)), false
 		}
 		return xmlrpcInt(int64(f.freeSpace)), false
 	case "d.update_priorities":

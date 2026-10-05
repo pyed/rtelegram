@@ -3,9 +3,9 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -156,6 +156,17 @@ func together(events []event, heading string) []event {
 	return []event{{kind: events[0].kind, text: text.String()}}
 }
 
+// wants reports whether any chat wants events of kind.
+func (a *application) wants(kind string) bool {
+	wanted := false
+	a.state.read(func(data *stateData) {
+		for _, settings := range data.Notify {
+			wanted = wanted || slices.Contains(settings.Events, kind)
+		}
+	})
+	return wanted
+}
+
 // subscribed reports whether any chat wants notifications.
 func (a *application) subscribed() bool {
 	subscribed := false
@@ -245,6 +256,10 @@ func (w *watcher) torrentEvents(torrents rtapi.Torrents, now time.Time, stallAft
 // A tracker that fails for every torrent is so announced once rather than
 // for each torrent, however slowly they report the failure.
 func (a *application) errorEvents(ctx context.Context, w *watcher, fresh, torrents rtapi.Torrents, now time.Time) []event {
+	if !a.wants(eventErrors) {
+		w.notices = nil
+		return nil
+	}
 	if len(fresh) > 0 {
 		if err := a.rtorrent.TrackersContext(ctx, fresh); err != nil {
 			a.logger.Printf("[ERROR] trackers of torrents with new errors: %s", err)
@@ -348,20 +363,15 @@ func errorGroups(errored rtapi.Torrents) string {
 }
 
 // diskEvents warns once when free space where downloads land drops below
-// lowDisk, and again only after it recovers by a tenth.
+// lowDisk, and again only after it recovers by a tenth. It looks only while
+// a chat wants to know.
 func (a *application) diskEvents(ctx context.Context, w *watcher, torrents rtapi.Torrents) []event {
-	check := spaceTorrents(torrents)
-	if a.lowDisk == 0 || len(check) == 0 {
+	if a.lowDisk == 0 || !a.wants(eventDisk) {
 		return nil
 	}
-	free := uint64(math.MaxUint64)
-	for _, torrent := range check[:min(len(check), maxDiskChecks)] {
-		if space, err := a.rtorrent.FreeDiskSpaceContext(ctx, torrent.Hash); err == nil {
-			free = min(free, space)
-		}
-	}
+	free, err := a.freeSpace(ctx, torrents)
 	switch {
-	case free == math.MaxUint64:
+	case err != nil:
 	case free < a.lowDisk && !w.lowDisk:
 		w.lowDisk = true
 		return []event{{kind: eventDisk, text: fmt.Sprintf("💾 Low disk space: %s free where rTorrent saves data.", formatBytes(free))}}
@@ -369,6 +379,25 @@ func (a *application) diskEvents(ctx context.Context, w *watcher, torrents rtapi
 		w.lowDisk = false
 	}
 	return nil
+}
+
+// freeSpace returns the free disk space where rTorrent saves data: the least
+// it reports where up to maxDiskChecks of spaceTorrents keep theirs, asked in
+// one request.
+func (a *application) freeSpace(ctx context.Context, torrents rtapi.Torrents) (uint64, error) {
+	check := spaceTorrents(torrents)
+	if len(check) == 0 {
+		return 0, errors.New("no active torrent to ask through")
+	}
+	hashes := make([]string, 0, maxDiskChecks)
+	for _, torrent := range check[:min(len(check), maxDiskChecks)] {
+		hashes = append(hashes, torrent.Hash)
+	}
+	spaces, err := a.rtorrent.FreeDiskSpacesContext(ctx, hashes...)
+	if err != nil {
+		return 0, err
+	}
+	return slices.Min(spaces), nil
 }
 
 // spaceTorrents returns the torrents through which rTorrent can report free
