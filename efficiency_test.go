@@ -17,12 +17,13 @@ import (
 func TestOnlyTrackerRepliesFetchTrackers(t *testing.T) {
 	app, telegramFake, rtorrentFake := buttonApp(t, handlerTorrents())
 	for _, text := range []string{"list", "down", "seeding", "paused", "checking", "errors", "active", "head", "tail",
-		"search deb", "latest", "count", "speed", "sort name"} {
+		"search deb", "latest", "count", "speed", "sort name", "unregistered", "labels", "labels -", "setlabel a x", "status"} {
 		command(app, text)
 		drain(telegramFake)
 	}
 	app.checkEvents(context.Background(), &watcher{}, time.Now())
 	app.checkDigest(context.Background(), time.Now())
+	app.checkStatus(context.Background(), time.Now())
 	app.wg.Wait()
 	if calls := rtorrentFake.called("t.url"); len(calls) != 0 {
 		t.Fatalf("lists without trackers fetched %d trackers", len(calls))
