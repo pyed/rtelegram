@@ -333,4 +333,26 @@ func TestInfoCardRefreshes(t *testing.T) {
 	if answer := lastAnswer(t, telegramFake); answer.text != "Updated" {
 		t.Fatalf("answer = %+v", answer)
 	}
+
+	// While rTorrent fails, the card stays as it is, buttons and all.
+	edits := len(telegramFake.edits)
+	rtorrentFake.set(func(f *fakeRtorrent) { f.faults = map[string]bool{"d.name": true} })
+	for _, data := range []string{"a:refresh", "n"} {
+		press(app, master, card.messageID, data)
+		if answer := lastAnswer(t, telegramFake); !answer.alert || len(telegramFake.edits) != edits {
+			t.Fatalf("%s while rTorrent fails: %+v, %d edits", data, answer, len(telegramFake.edits)-edits)
+		}
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.faults = nil })
+	press(app, master, card.messageID, "a:refresh")
+	if answer := lastAnswer(t, telegramFake); answer.text != "Updated" {
+		t.Fatalf("refresh once rTorrent answers: %+v", answer)
+	}
+
+	// A torrent that is gone says so.
+	rtorrentFake.set(func(f *fakeRtorrent) { f.torrents = f.torrents[:1] })
+	press(app, master, card.messageID, "a:refresh")
+	if gone := lastEdit(t, telegramFake); gone.text != "This torrent is no longer loaded." {
+		t.Fatalf("card of a removed torrent = %q", gone.text)
+	}
 }

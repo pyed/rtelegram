@@ -508,6 +508,9 @@ func (a *application) cardAction(ctx context.Context, key screenKey, scr *screen
 		return a.redrawCard(ctx, key, &next, "")
 	}
 	torrent, err := a.rtorrent.GetTorrentContext(ctx, scr.hash)
+	if errors.Is(err, rtapi.ErrNotFound) {
+		return a.redrawCard(ctx, key, scr, "") // says it is gone
+	}
 	if err != nil {
 		return err.Error(), true
 	}
@@ -595,6 +598,10 @@ func (a *application) redrawList(ctx context.Context, key screenKey, spec listSp
 // redrawCard shows a torrent card in an existing message.
 func (a *application) redrawCard(ctx context.Context, key screenKey, scr *screen, toast string) (string, bool) {
 	torrent, err := a.rtorrent.GetTorrentContext(ctx, scr.hash)
+	if err != nil && !errors.Is(err, rtapi.ErrNotFound) {
+		// rTorrent did not answer, or failed; the card stays as it was.
+		return err.Error(), true
+	}
 	if err != nil {
 		var keyboard *models.InlineKeyboardMarkup
 		if scr.parent != nil && scr.parent.list != nil {
