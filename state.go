@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/pyed/rtapi"
@@ -154,5 +155,19 @@ func (s *state) save() error {
 	if err := os.Rename(temp.Name(), s.path); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
+	syncDir(dir)
 	return nil
+}
+
+// syncDir asks the system to write dir's entries to disk, so that a file just
+// renamed into it is there after a power cut, not the old one or none. It is
+// best effort: Windows, and some file systems, cannot sync a directory.
+func syncDir(dir string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if file, err := os.Open(dir); err == nil {
+		file.Sync()
+		file.Close()
+	}
 }

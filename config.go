@@ -94,6 +94,9 @@ func writePrivateFile(path, content string, uid, gid int) error {
 	}
 	defer os.Remove(temp.Name())
 	_, err = temp.WriteString(content)
+	if err == nil {
+		err = temp.Sync()
+	}
 	if closeErr := temp.Close(); err == nil {
 		err = closeErr
 	}
@@ -105,6 +108,9 @@ func writePrivateFile(path, content string, uid, gid int) error {
 	}
 	if err == nil {
 		err = os.Rename(temp.Name(), path)
+	}
+	if err == nil {
+		syncDir(dir)
 	}
 	return err
 }
