@@ -151,7 +151,8 @@ it, verify it, label it, remove it, list its files, refresh, and go back to
 the list. Removing asks for confirmation first. ☰ All under a list acts on
 every torrent it shows (see [Acting on whole lists](#acting-on-whole-lists)). Only the users in `RT_MASTERS` can use
 the buttons, even in groups, and the bot remembers the buttons of its last 500
-messages.
+messages. The buttons of notifications need nothing remembered, so they work
+however old the notification, even after the bot restarts.
 
 Commands can also name torrents by the hash prefix that lists show in angle
 brackets, such as `<1c6>`, or by fewer characters, down to one, as long as no

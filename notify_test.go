@@ -79,6 +79,12 @@ func TestCompletedTorrentsAreAnnouncedOnce(t *testing.T) {
 	if message.text != "✅ Completed: new\n2.0 GiB, ratio 0.00" || !hasButton(message.buttons, "ℹ Details") {
 		t.Fatalf("announcement = %q %v", message.text, buttonTexts(message.buttons))
 	}
+	// Details needs nothing remembered: it works after the bot restarts.
+	app.screens = screenStore{}
+	press(app, master, message.messageID, "t:"+strings.Repeat("B", 40))
+	if card := lastEdit(t, telegramFake); !strings.HasPrefix(card.text, "new\nSeeding") || !hasButton(card.buttons, "🔄 Refresh") {
+		t.Fatalf("details = %q %v", card.text, buttonTexts(card.buttons))
+	}
 	app.checkEvents(ctx, w, time.Now())
 	if sent := drain(telegramFake); len(sent) != 0 {
 		t.Fatalf("announced twice: %q", sent)

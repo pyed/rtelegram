@@ -280,7 +280,8 @@ func (a *application) sendScreen(ctx context.Context, chatID int64, text string,
 }
 
 // postScreen is sendScreen, and returns the message sent; its ID is 0 when
-// the text was too long for buttons.
+// the text was too long for buttons. A nil scr is not remembered: its
+// buttons need nothing remembered (statelessVerbs).
 func (a *application) postScreen(ctx context.Context, chatID int64, text string, keyboard *models.InlineKeyboardMarkup, scr *screen) (screenKey, error) {
 	if telegramLength(text) > maxTelegramMessage {
 		_, err := a.send(ctx, chatID, text)
@@ -305,9 +306,17 @@ func (a *application) postScreen(ctx context.Context, chatID int64, text string,
 		return screenKey{chatID: chatID}, err
 	}
 	key := screenKey{chatID, message.ID}
-	a.screens.put(key, scr)
+	if scr != nil {
+		a.screens.put(key, scr)
+	}
 	return key, nil
 }
+
+// statelessVerbs are the buttons that carry all they need, as notifications'
+// do, and so work on messages the bot does not remember: after it restarts,
+// or once newer screens have pushed them out. "t:HASH" opens a torrent's card
+// and "un" lists the unregistered torrents.
+var statelessVerbs = map[string]*screen{"t": {}, "un": {cleanup: true}}
 
 // editScreen replaces a screen's text and buttons; nil keyboard removes them.
 func (a *application) editScreen(ctx context.Context, key screenKey, text string, keyboard *models.InlineKeyboardMarkup) error {
@@ -361,11 +370,14 @@ func (a *application) pressButton(ctx context.Context, query *models.CallbackQue
 		ctx = context.WithValue(ctx, messageThreadIDKey{}, message.MessageThreadID)
 	}
 	key := screenKey{message.Chat.ID, message.ID}
+	verb, arg, _ := strings.Cut(query.Data, ":")
 	scr := a.screens.get(key)
+	if stateless, ok := statelessVerbs[verb]; scr == nil && ok {
+		scr = stateless
+	}
 	if scr == nil {
 		return "These buttons have expired. Run the command again.", true
 	}
-	verb, arg, _ := strings.Cut(query.Data, ":")
 	switch verb {
 	case "noop":
 		return "", false

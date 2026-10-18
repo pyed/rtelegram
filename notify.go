@@ -567,7 +567,8 @@ func (a *application) deliverTo(ctx context.Context, chatID int64, settings noti
 		if len(rows) == 0 {
 			_, err = a.send(chatCtx, chatID, e.text)
 		} else {
-			err = a.sendScreen(chatCtx, chatID, e.text, &models.InlineKeyboardMarkup{InlineKeyboard: rows}, &screen{cleanup: e.unregistered > 0})
+			// Its buttons need nothing remembered, so it takes no screen.
+			err = a.sendScreen(chatCtx, chatID, e.text, &models.InlineKeyboardMarkup{InlineKeyboard: rows}, nil)
 		}
 		switch {
 		case err == nil:

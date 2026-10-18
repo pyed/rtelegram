@@ -168,6 +168,12 @@ func TestErrorNotificationsOfferCleaningUpUnregisteredTorrents(t *testing.T) {
 	if !strings.HasPrefix(message.text, "⚠️ Errors: 4 torrents") || strings.Join(buttonTexts(message.buttons), ",") != "🧹 4 unregistered: clean up=un" {
 		t.Fatalf("notification = %q %v", message.text, buttonTexts(message.buttons))
 	}
+	// Its button needs nothing remembered, so it works after the bot
+	// restarts, and the notification takes none of the screens remembered.
+	if app.screens.get(screenKey{111, message.messageID}) != nil {
+		t.Fatal("the notification was remembered as a screen")
+	}
+	app.screens = screenStore{}
 	press(app, master, message.messageID, "un")
 	if list := nextSent(t, telegramFake); !strings.Contains(list.text, "seed 3") || !hasButton(list.buttons, "🗑 Remove all 4") {
 		t.Fatalf("list from the notification = %q %v", list.text, buttonTexts(list.buttons))
