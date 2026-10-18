@@ -389,8 +389,9 @@ func (a *application) upload(ctx context.Context, chatID int64, torrent *rtapi.T
 		return fmt.Errorf("open data root: %w", err)
 	}
 	defer root.Close()
-	messageThreadID, _ := ctx.Value(messageThreadIDKey{}).(int)
-	err = a.retryTelegram(ctx, func() error {
+	// Sent as replies are, it follows a group that became a supergroup, and
+	// goes to the chat itself when its forum topic is gone.
+	_, err = a.post(ctx, chatID, func(chatID int64, thread int) error {
 		content, err := root.Open(relative)
 		if err != nil {
 			return err
@@ -398,15 +399,13 @@ func (a *application) upload(ctx context.Context, chatID int64, torrent *rtapi.T
 		defer content.Close()
 		_, err = a.bot.SendDocument(ctx, &telegram.SendDocumentParams{
 			ChatID:          chatID,
-			MessageThreadID: messageThreadID,
+			MessageThreadID: thread,
 			Document:        &models.InputFileUpload{Filename: path.Base(file.Path), Data: content},
 		})
 		return err
 	})
 	if err != nil {
-		clean := redact(a.token, err.Error())
-		a.logger.Printf("[ERROR] Send file: %s", clean)
-		return errors.New(clean)
+		a.logger.Printf("[ERROR] Send file: %s", err)
 	}
-	return nil
+	return err
 }

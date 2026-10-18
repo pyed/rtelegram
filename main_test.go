@@ -503,6 +503,10 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 		result = "true"
 	case "sendDocument":
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
+		if to, migrated := f.migrated[chatID]; migrated {
+			return response(http.StatusBadRequest, fmt.Sprintf(`{"ok":false,"error_code":400,`+
+				`"description":"Bad Request: group chat was upgraded to a supergroup chat","parameters":{"migrate_to_chat_id":%d}}`, to)), nil
+		}
 		upload, header, err := request.FormFile("document")
 		if err != nil {
 			return nil, err

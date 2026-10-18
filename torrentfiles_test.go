@@ -227,6 +227,19 @@ func TestGetSendsFinishedFilesInsideTheDataRoot(t *testing.T) {
 	}
 }
 
+// A file goes where replies go: to the supergroup a group became.
+func TestGetFollowsAGroupThatMoved(t *testing.T) {
+	root := t.TempDir()
+	torrent, files := showTorrent(t, root)
+	app, telegramFake, _ := fileApp(t, root, torrent, files)
+	telegramFake.migrated = map[int64]int64{111: -1001}
+	command(app, "get aaaaaaa 1")
+	app.wg.Wait()
+	if len(telegramFake.documents) != 1 || telegramFake.documents[0].chatID != -1001 {
+		t.Fatalf("documents = %+v", telegramFake.documents)
+	}
+}
+
 func TestGetSendsASingleFileTorrentWithoutANumber(t *testing.T) {
 	root := t.TempDir()
 	movie := filepath.Join(root, "movie.mkv")
