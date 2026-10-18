@@ -14,7 +14,9 @@ import (
 // reason says so count; a tracker that cannot be reached, or refuses for
 // the account's sake, does not. Only private torrents count, since public
 // torrents often list trackers that refuse every torrent they were not told
-// about, and find peers elsewhere anyway.
+// about, and find peers elsewhere anyway; and only those with one tracker,
+// since a torrent's message is what the last tracker to answer said, and one
+// tracker's refusal says nothing about the others.
 
 // unregisteredReasons are what trackers answer for a torrent they no longer
 // have: Gazelle and Ocelot say "Unregistered torrent", XBT "Torrent not
@@ -56,11 +58,11 @@ func trackerRefusal(message string) (string, bool) {
 	return "", false
 }
 
-// unregistered reports whether a private torrent's tracker said it no longer
-// has the torrent.
+// unregistered reports whether a private torrent's one tracker said it no
+// longer has the torrent.
 func unregistered(torrent *rtapi.Torrent) bool {
 	reason, ok := trackerRefusal(torrent.Message)
-	return ok && torrent.Private && unregisteredReasons.MatchString(reason) && !accountReasons.MatchString(reason)
+	return ok && torrent.Private && torrent.TrackerCount <= 1 && unregisteredReasons.MatchString(reason) && !accountReasons.MatchString(reason)
 }
 
 // countUnregistered counts the unregistered torrents among torrents.

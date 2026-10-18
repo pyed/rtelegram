@@ -355,7 +355,9 @@ the like. A tracker that is down or times out never counts, nor does a refusal
 about the account, the client, or the tracker itself, such as an invalid
 passkey, a banned client, or maintenance. Only private torrents count: public
 torrents often list trackers that refuse every torrent they were not told
-about, and find peers elsewhere. The errors list and error notifications have
+about, and find peers elsewhere. So do only torrents with one tracker: a
+torrent's error is what its last tracker to answer said, and one tracker's
+refusal says nothing about the others. The errors list and error notifications have
 a 🧹 button that lists unregistered torrents, digests count them, and their
 cards say so.
 

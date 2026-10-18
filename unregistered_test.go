@@ -62,6 +62,13 @@ func TestOnlyDeletionsCountAsUnregistered(t *testing.T) {
 			t.Errorf("a public torrent with %q counts", message)
 		}
 	}
+	// A torrent's message is what its last tracker to answer said, so with
+	// several trackers, one's refusal says nothing about the rest.
+	for count, want := range map[int]bool{0: true, 1: true, 2: false} {
+		if got := unregistered(&rtapi.Torrent{Message: unregisteredMessage, Private: true, TrackerCount: count}); got != want {
+			t.Errorf("unregistered with %d trackers = %v, want %v", count, got, want)
+		}
+	}
 }
 
 func unregisteredTorrents() rtapi.Torrents {
