@@ -190,9 +190,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 
 	logger := log.New(stdout, "", log.LstdFlags)
-	var logFile *os.File
 	if cfg.logFile != "" {
-		logFile, err = os.OpenFile(cfg.logFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+		logFile, err := openLogFile(cfg.logFile, maxLogSize)
 		if err != nil {
 			return fmt.Errorf("open log file: %w", err)
 		}
@@ -304,7 +303,7 @@ func parseConfig(args []string, getenv func(string) string, stderr io.Writer) (c
 	fs.StringVar(&cfg.rtorrentAddress, "url", "", "rTorrent address: an SCGI socket path or host:port, or an http(s):// XML-RPC URL (or RT_URL; default "+defaultRtorrentAddress+")")
 	fs.Int64Var(&cfg.maxResponseMiB, "max-response-mib", defaultMaxResponseMiB, "Largest rTorrent response to accept, in MiB; raise it for very large libraries")
 	fs.BoolVar(&cfg.addStopped, "add-stopped", false, "Add torrents without starting them")
-	fs.StringVar(&cfg.logFile, "logfile", "", "Send logs to a file")
+	fs.StringVar(&cfg.logFile, "logfile", "", "Send logs to a file, which is moved aside to FILE.1 at 10 MiB")
 	fs.DurationVar(&cfg.watchInterval, "watch-interval", defaultWatchInterval, "How often to check rTorrent for notifications")
 	fs.DurationVar(&cfg.stallAfter, "stall-after", defaultStallAfter, "Report a download as stalled after this long without progress (0 disables)")
 	lowDisk := fs.String("low-disk", "5G", "Report low disk space below this much free space where rTorrent saves data (0 disables)")

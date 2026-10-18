@@ -132,7 +132,8 @@ Flags, with the environment variables that can replace them:
   sort orders, subscriptions, quiet hours, watch rules, and digests; it
   defaults to `rtelegram/state.json` in the user's config directory, so a
   service without a home directory needs it set. `-logfile` writes logs to a
-  private file, `-no-live` stops follow-up edits of `head`, `tail`, `active`,
+  private file, which moves aside to `FILE.1` at 10 MiB, as the Windows
+  service's `rtelegram.log` does, `-no-live` stops follow-up edits of `head`, `tail`, `active`,
   and `speed` replies, and `-version` prints the version without needing any
   other configuration.
 

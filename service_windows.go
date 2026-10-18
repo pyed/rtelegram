@@ -131,7 +131,7 @@ func (windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, sta
 	status <- svc.Status{State: svc.StartPending}
 	output := io.Discard
 	if path := serviceConfigPath(os.Args[1:]); path != "" {
-		if file, err := os.OpenFile(filepath.Join(filepath.Dir(path), "rtelegram.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); err == nil {
+		if file, err := openLogFile(filepath.Join(filepath.Dir(path), "rtelegram.log"), maxLogSize); err == nil {
 			defer file.Close()
 			output = file
 		}
