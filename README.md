@@ -154,7 +154,8 @@ messages.
 
 Commands can also name torrents by the hash prefix that lists show in angle
 brackets, such as `<1c6>`, or by fewer characters, down to one, as long as no
-other torrent's hash starts with them. Lists show every torrent's hash to the
+other torrent's hash starts with them; `del` and `deldata` take at least
+three, since a shorter prefix can come to name another torrent. Lists show every torrent's hash to the
 same length: the fewest characters that tell all loaded torrents apart, and at
 least three. A few dozen torrents usually need three, a hundred four, and a
 few thousand six or seven.

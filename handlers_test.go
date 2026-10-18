@@ -99,6 +99,15 @@ func TestCommandHandlers(t *testing.T) {
 			{has: []string{"Debian"}, lacks: []string{"Gentoo"}},
 		}, calledWith("d.erase", "E")},
 		{"del refuses all", []string{"del all"}, []reply{{is: `del: no torrent matches hash prefix "all"`}}, calledWith("d.erase")},
+		// A prefix shorter than lists show could name another torrent later.
+		{"del refuses short prefixes", []string{"del eee e"}, []reply{
+			{is: `del: give at least 3 characters of a hash to remove its torrent, as lists show them; "e" is too short`},
+		}, calledWith("d.erase")},
+		{"deldata refuses short prefixes", []string{"deldata <ee> confirm", "deldata ee"}, []reply{
+			{is: `deldata: give at least 3 characters of a hash to remove its torrent, as lists show them; "<ee>" is too short`},
+			{is: `deldata: give at least 3 characters of a hash to remove its torrent, as lists show them; "ee" is too short`},
+		}, calledWith("d.erase")},
+		{"del takes a bracketed prefix", []string{"del <eee>"}, []reply{{is: "Deleted: Gentoo"}}, calledWith("d.erase", "E")},
 		{"stats", []string{"sa"}, []reply{{is: "Throttle: off / off\nPort: 6890\nDirectory: /downloads\n" +
 			"Session uploaded: 3.0 GiB\nSession downloaded: 5.0 GiB\n" +
 			"Loaded torrents uploaded: 3.5 KiB\nLoaded torrents downloaded: 3.5 KiB\nLoaded torrents ratio: 1.00"}}, nil},

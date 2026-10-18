@@ -240,7 +240,23 @@ func (a *application) check(ctx context.Context, chatID int64, references []stri
 	a.send(ctx, chatID, "Checking: "+pluralNames(torrents))
 }
 
+// removalReferences refuses hash prefixes shorter than lists show, for the
+// commands that remove torrents: a prefix that is unique now may name another
+// torrent once torrents come and go, and a removal cannot be undone.
+func removalReferences(references []string) error {
+	for _, reference := range references {
+		if prefix := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(reference), "<"), ">"); len(prefix) < minPrefixLength {
+			return fmt.Errorf("give at least %d characters of a hash to remove its torrent, as lists show them; %q is too short", minPrefixLength, reference)
+		}
+	}
+	return nil
+}
+
 func (a *application) del(ctx context.Context, chatID int64, references []string) {
+	if err := removalReferences(references); err != nil {
+		a.send(ctx, chatID, "del: "+err.Error())
+		return
+	}
 	torrents, err := a.selected(ctx, chatID, references, false)
 	if err != nil {
 		a.send(ctx, chatID, "del: "+err.Error())
@@ -257,6 +273,12 @@ func (a *application) del(ctx context.Context, chatID int64, references []string
 // deldata deletes a torrent and its data. "deldata HASH" asks with buttons,
 // and "deldata HASH confirm" deletes straight away.
 func (a *application) deldata(ctx context.Context, chatID int64, arguments []string) {
+	if len(arguments) > 0 {
+		if err := removalReferences(arguments[:1]); err != nil {
+			a.send(ctx, chatID, "deldata: "+err.Error())
+			return
+		}
+	}
 	switch {
 	case len(arguments) == 2 && strings.EqualFold(arguments[1], "confirm"):
 		message, _ := a.deleteWithData(ctx, chatID, arguments[0])
