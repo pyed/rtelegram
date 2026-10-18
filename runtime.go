@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -492,15 +491,14 @@ func (a *application) torrents(ctx context.Context, chatID int64) (rtapi.Torrent
 	}
 	var sorting rtapi.Sorting
 	a.state.read(func(data *stateData) { sorting = data.Sorts[chatID] })
+	// Age is reset when rTorrent restarts, so "sort age", saved as ByAge,
+	// sorts by when torrents were added.
 	switch sorting {
 	case rtapi.ByAge:
-		// Age is reset when rTorrent restarts, so sort by when torrents
-		// were added.
-		slices.SortStableFunc(torrents, func(x, y *rtapi.Torrent) int { return newestFirst(y, x) })
+		sorting = rtapi.ByAdded
 	case rtapi.ByAgeRev:
-		slices.SortStableFunc(torrents, newestFirst)
-	default:
-		torrents.Sort(sorting)
+		sorting = rtapi.ByAddedRev
 	}
+	torrents.Sort(sorting)
 	return torrents, nil
 }
