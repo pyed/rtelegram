@@ -417,6 +417,8 @@ func (f *fakeRtorrent) field(torrent *rtapi.Torrent, name string) string {
 		return xmlrpcInt(int64(torrent.Started))
 	case "d.is_private":
 		return flag(torrent.Private)
+	case "d.tracker_size":
+		return xmlrpcInt(int64(torrent.TrackerCount))
 	case "d.down.total":
 		return xmlrpcInt(int64(f.downTotal[torrent.Hash]))
 	case "p.multicall=,p.is_incoming":
