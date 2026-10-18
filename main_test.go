@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	telegram "github.com/go-telegram/bot"
@@ -193,19 +194,46 @@ func TestGroupDocumentsRequireAnAddCaption(t *testing.T) {
 	}
 }
 
+// Telegram measures messages in UTF-16 code units, so an emoji counts twice.
 func TestChunkMessagePreservesUTF8AndBounds(t *testing.T) {
-	text := strings.Repeat("界", 5000) + "\n" + strings.Repeat("x", 5000)
-	chunks := chunkMessage(text)
-	if strings.Join(chunks, "") != text {
-		t.Fatal("chunks do not reconstruct the original text")
-	}
-	for i, chunk := range chunks {
-		if !utf8.ValidString(chunk) || utf8.RuneCountInString(chunk) > maxTelegramMessage {
-			t.Fatalf("chunk %d is invalid or too large: %d runes", i, utf8.RuneCountInString(chunk))
+	for _, text := range []string{
+		strings.Repeat("界", 5000) + "\n" + strings.Repeat("x", 5000),
+		strings.Repeat("😀", 3000),
+		strings.Repeat("a😀\n", 2000),
+	} {
+		chunks := chunkMessage(text)
+		if strings.Join(chunks, "") != text {
+			t.Fatal("chunks do not reconstruct the original text")
+		}
+		for i, chunk := range chunks {
+			if !utf8.ValidString(chunk) || len(utf16.Encode([]rune(chunk))) > maxTelegramMessage {
+				t.Fatalf("chunk %d is invalid or too large: %d UTF-16 units", i, len(utf16.Encode([]rune(chunk))))
+			}
+			if i < len(chunks)-1 && strings.Contains(chunk, "\n") && !strings.HasSuffix(chunk, "\n") {
+				t.Fatalf("chunk %d is not cut at a line break", i)
+			}
 		}
 	}
 	if got := chunkMessage(strings.Repeat("a", maxTelegramMessage+1)); len(got) != 2 {
 		t.Fatalf("long line produced %d chunks", len(got))
+	}
+	if got := chunkMessage(strings.Repeat("😀", maxTelegramMessage/2)); len(got) != 1 {
+		t.Fatalf("a message of exactly the limit produced %d chunks", len(got))
+	}
+	if got := telegramLength("a界😀"); got != 4 {
+		t.Fatalf("telegramLength = %d, want 4", got)
+	}
+}
+
+// A long reply of emoji goes out in messages Telegram accepts.
+func TestSendSplitsEmojiByTelegramsMeasure(t *testing.T) {
+	fake := &fakeTelegram{}
+	app := &application{bot: newTestBot(t, fake, "123:SECRET"), logger: log.New(io.Discard, "", 0), token: "123:SECRET"}
+	if _, err := app.send(context.Background(), 111, strings.Repeat("😀", 3000)); err != nil {
+		t.Fatal(err)
+	}
+	if fake.sendAttempts != 2 {
+		t.Fatalf("sent %d messages", fake.sendAttempts)
 	}
 }
 
@@ -427,6 +455,9 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 		}
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
 		threadID, _ := strconv.Atoi(request.FormValue("message_thread_id"))
+		if len(utf16.Encode([]rune(request.FormValue("text")))) > maxTelegramMessage {
+			return response(http.StatusBadRequest, `{"ok":false,"error_code":400,"description":"Bad Request: message is too long"}`), nil
+		}
 		switch to, migrated := f.migrated[chatID]; {
 		case f.forbidden[chatID]:
 			return response(http.StatusForbidden, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`), nil

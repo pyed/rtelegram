@@ -22,7 +22,7 @@ const (
 	listPageSize   = 10
 	maxScreens     = 500
 	maxButtonRunes = 40
-	maxToastRunes  = 200
+	maxToastLength = 200 // as telegramLength measures
 )
 
 type screenKey struct {
@@ -282,7 +282,7 @@ func (a *application) sendScreen(ctx context.Context, chatID int64, text string,
 // postScreen is sendScreen, and returns the message sent; its ID is 0 when
 // the text was too long for buttons.
 func (a *application) postScreen(ctx context.Context, chatID int64, text string, keyboard *models.InlineKeyboardMarkup, scr *screen) (screenKey, error) {
-	if utf8.RuneCountInString(text) > maxTelegramMessage {
+	if telegramLength(text) > maxTelegramMessage {
 		_, err := a.send(ctx, chatID, text)
 		return screenKey{chatID: chatID}, err
 	}
@@ -339,8 +339,8 @@ func (a *application) editScreen(ctx context.Context, key screenKey, text string
 // and every press is answered so the client stops its spinner.
 func (a *application) handleCallback(ctx context.Context, query *models.CallbackQuery) {
 	text, alert := a.pressButton(ctx, query)
-	if runes := []rune(text); len(runes) > maxToastRunes {
-		text = string(runes[:maxToastRunes-1]) + "…"
+	if telegramLength(text) > maxToastLength {
+		text = telegramPrefix(text, maxToastLength-1) + "…"
 	}
 	if _, err := a.bot.AnswerCallbackQuery(ctx, &telegram.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID, Text: text, ShowAlert: alert,

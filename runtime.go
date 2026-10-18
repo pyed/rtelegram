@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	telegram "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -172,25 +173,43 @@ func waitFor(ctx context.Context, duration time.Duration) bool {
 	}
 }
 
-func chunkMessage(text string) []string {
-	if text == "" {
-		return nil
+// telegramLength is the length of text as Telegram measures its limits, in
+// UTF-16 code units: a character outside the Basic Multilingual Plane, as
+// most emoji are, counts twice.
+func telegramLength(text string) int {
+	length := 0
+	for _, r := range text {
+		length += max(utf16.RuneLen(r), 1)
 	}
-	runes := []rune(text)
-	chunks := make([]string, 0, (len(runes)+maxTelegramMessage-1)/maxTelegramMessage)
-	for len(runes) > maxTelegramMessage {
-		cut := maxTelegramMessage
-		for i := cut - 1; i > 0; i-- {
-			if runes[i] == '\n' {
-				cut = i + 1
-				break
-			}
+	return length
+}
+
+// telegramPrefix returns the longest start of text that is at most limit
+// long, as telegramLength measures.
+func telegramPrefix(text string, limit int) string {
+	length := 0
+	for i, r := range text {
+		if length += max(utf16.RuneLen(r), 1); length > limit {
+			return text[:i]
 		}
-		chunks = append(chunks, string(runes[:cut]))
-		runes = runes[cut:]
 	}
-	if len(runes) != 0 {
-		chunks = append(chunks, string(runes))
+	return text
+}
+
+// chunkMessage splits text into messages Telegram accepts, each cut after its
+// last line break when it has one.
+func chunkMessage(text string) []string {
+	var chunks []string
+	for telegramLength(text) > maxTelegramMessage {
+		chunk := telegramPrefix(text, maxTelegramMessage)
+		if newline := strings.LastIndexByte(chunk, '\n'); newline > 0 {
+			chunk = chunk[:newline+1]
+		}
+		chunks = append(chunks, chunk)
+		text = text[len(chunk):]
+	}
+	if text != "" {
+		chunks = append(chunks, text)
 	}
 	return chunks
 }
@@ -426,7 +445,7 @@ func transientFailure(err error) bool {
 }
 
 func (a *application) edit(ctx context.Context, chatID int64, messageID int, text string) error {
-	if messageID == 0 || text == "" || len([]rune(text)) > maxTelegramMessage {
+	if messageID == 0 || text == "" || telegramLength(text) > maxTelegramMessage {
 		return errors.New("message cannot be edited")
 	}
 	_, err := a.bot.EditMessageText(ctx, &telegram.EditMessageTextParams{
