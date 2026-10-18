@@ -131,6 +131,7 @@ func TestSetupMasterRepliesWithTheUsersID(t *testing.T) {
 		app := &application{bot: newTestBot(t, telegramFake, "123:SECRET"), logger: log.New(&logs, "", 0), token: "123:SECRET",
 			masters: principals{ids: test.masters}}
 		app.handle(context.Background(), &models.Update{Message: stranger})
+		app.handle(context.Background(), &models.Update{Message: stranger}) // answered once
 		sent := drain(telegramFake)
 		if test.reply != (len(sent) == 1 && strings.HasPrefix(sent[0], "Your Telegram user ID is 555. Restart rtelegram with RT_MASTERS=555")) {
 			t.Errorf("masters %v: sent %q", test.masters, sent)

@@ -613,24 +613,29 @@ func (a *application) handle(ctx context.Context, update *models.Update) {
 // of each such user who messages the bot privately is logged once, so an
 // operator can find the ID to authorize; group members are not logged. While
 // the only master is the setup placeholder, the bot also tells them their ID,
-// since there is nothing yet that a stranger could learn or control.
+// once, since there is nothing yet that a stranger could learn or control.
 func (a *application) ignore(ctx context.Context, message *models.Message) {
 	if message.From == nil || message.Chat.Type != models.ChatTypePrivate {
 		return
 	}
 	id := message.From.ID
+	a.ignoredMu.Lock()
+	_, seen := a.ignored[id]
+	if !seen && len(a.ignored) < maxIgnoredUsers {
+		if a.ignored == nil {
+			a.ignored = make(map[int64]struct{})
+		}
+		a.ignored[id] = struct{}{}
+	} else {
+		seen = true
+	}
+	a.ignoredMu.Unlock()
+	if seen {
+		return
+	}
 	if a.masters.setup() {
 		a.send(ctx, message.Chat.ID, fmt.Sprintf("Your Telegram user ID is %d. Restart rtelegram with RT_MASTERS=%d (or -masters %d), and this account can use the bot.", id, id, id))
 	}
-	a.ignoredMu.Lock()
-	defer a.ignoredMu.Unlock()
-	if _, seen := a.ignored[message.From.ID]; seen || len(a.ignored) >= maxIgnoredUsers {
-		return
-	}
-	if a.ignored == nil {
-		a.ignored = make(map[int64]struct{})
-	}
-	a.ignored[message.From.ID] = struct{}{}
 	username := ""
 	if message.From.Username != "" {
 		username = " (@" + message.From.Username + ")"
