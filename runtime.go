@@ -64,6 +64,83 @@ func (c cancelOnClose) Close() error {
 	return err
 }
 
+// chatQueueSize is how many updates of one chat may wait for its handler.
+const chatQueueSize = 64
+
+// dispatch passes an update to its chat's queue, so that chats are handled
+// side by side, and each chat's updates in order: a slow call to rTorrent, as
+// while rTorrent checks a large torrent, holds up only the chat that made it.
+// Updates from anyone but the masters are answered at once, and make no queue.
+func (a *application) dispatch(ctx context.Context, update *models.Update) {
+	chatID, from := updateOrigin(update)
+	if !a.masters.authorized(from) {
+		a.handle(ctx, update)
+		return
+	}
+	a.queuesMu.Lock()
+	queue, ok := a.queues[chatID]
+	if !ok {
+		if a.queues == nil {
+			a.queues = make(map[int64]chan *models.Update)
+		}
+		queue = make(chan *models.Update, chatQueueSize)
+		a.queues[chatID] = queue
+		a.launch(ctx, func(ctx context.Context) { a.serveChat(ctx, queue) })
+	}
+	a.queuesMu.Unlock()
+	select {
+	case queue <- update:
+	case <-ctx.Done():
+	}
+}
+
+// serveChat handles a chat's updates, one at a time, until ctx ends. When a
+// message takes a while, the chat shows the bot typing.
+func (a *application) serveChat(ctx context.Context, queue <-chan *models.Update) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case update := <-queue:
+			if update.Message == nil {
+				a.handle(ctx, update)
+				continue
+			}
+			handled := make(chan struct{})
+			a.launch(ctx, func(ctx context.Context) {
+				timer := time.NewTimer(cmp.Or(a.typingDelay, time.Second))
+				defer timer.Stop()
+				select {
+				case <-handled:
+				case <-ctx.Done():
+				case <-timer.C:
+					_, _ = a.bot.SendChatAction(ctx, &telegram.SendChatActionParams{
+						ChatID: update.Message.Chat.ID, MessageThreadID: update.Message.MessageThreadID, Action: models.ChatActionTyping,
+					})
+				}
+			})
+			a.handle(ctx, update)
+			close(handled)
+		}
+	}
+}
+
+// updateOrigin returns the chat an update comes from, and who sent it.
+func updateOrigin(update *models.Update) (int64, *models.User) {
+	switch {
+	case update == nil:
+	case update.Message != nil:
+		return update.Message.Chat.ID, update.Message.From
+	case update.CallbackQuery != nil:
+		from := &update.CallbackQuery.From
+		if message := update.CallbackQuery.Message.Message; message != nil {
+			return message.Chat.ID, from
+		}
+		return from.ID, from
+	}
+	return 0, nil
+}
+
 func (a *application) launch(ctx context.Context, fn func(context.Context)) {
 	a.wg.Add(1)
 	go func() {
@@ -130,10 +207,6 @@ func (a *application) sendText(ctx context.Context, chatID int64, text string) (
 	if len(chunks) == 0 {
 		return chatID, 0, errors.New("refusing to send an empty message")
 	}
-	messageThreadID, _ := ctx.Value(messageThreadIDKey{}).(int)
-	_, _ = a.bot.SendChatAction(ctx, &telegram.SendChatActionParams{
-		ChatID: chatID, MessageThreadID: messageThreadID, Action: models.ChatActionTyping,
-	})
 	if len(chunks) > maxMessageChunks {
 		chatID, err := a.sendFile(ctx, chatID, text)
 		return chatID, 0, err

@@ -122,6 +122,12 @@ type application struct {
 	// retryDelay is the first wait before trying a Telegram request again
 	// after a failure a moment may cure; 0 is a second.
 	retryDelay time.Duration
+	// queues hold each chat's updates for its handler (dispatch); queuesMu
+	// guards the map. typingDelay is how long a message's handling takes
+	// before the chat shows the bot typing; 0 is a second.
+	queuesMu    sync.Mutex
+	queues      map[int64]chan *models.Update
+	typingDelay time.Duration
 	// addTimeout bounds how long an add waits for rTorrent to load the torrent.
 	addTimeout      time.Duration
 	addPollInterval time.Duration
@@ -205,7 +211,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 			logger.Printf("[ERROR] Telegram: %s", redact(cfg.token, err.Error()))
 		}),
 		telegram.WithDefaultHandler(func(handlerCtx context.Context, _ *telegram.Bot, update *models.Update) {
-			app.handle(handlerCtx, update)
+			app.dispatch(handlerCtx, update)
 		}),
 	)
 	if err != nil {

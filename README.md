@@ -269,6 +269,10 @@ When Telegram answers with a server error, or the connection drops, it tries
 a few more times over several seconds; notifications that still could not be
 sent are tried again at each check, for up to a day.
 
+Each chat's commands are answered in order, and chats side by side, so a
+command waiting for a busy rTorrent holds up only its own chat. One that takes
+more than a second shows the bot typing.
+
 ## Files
 
 `/files HASH`, or 📂 Files on a torrent's card, lists the torrent's files, ten

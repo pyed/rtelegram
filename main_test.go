@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -321,6 +322,9 @@ func TestDataRootContainmentAndRemoval(t *testing.T) {
 }
 
 type fakeTelegram struct {
+	// mu lets chats handled side by side use the fake.
+	mu           sync.Mutex
+	chatActions  int
 	chatIDs      []int64
 	threadIDs    []int
 	methods      []string
@@ -389,6 +393,8 @@ type errorHTTPClient struct{ err error }
 func (c errorHTTPClient) Do(*http.Request) (*http.Response, error) { return nil, c.err }
 
 func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	method := filepath.Base(request.URL.Path)
 	if request.Method == http.MethodGet {
 		return response(http.StatusOK, string(f.file)), nil
@@ -399,6 +405,7 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 	var result string
 	switch method {
 	case "sendChatAction":
+		f.chatActions++
 		result = "true"
 	case "sendMessage":
 		f.sendAttempts++

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,52 @@ func buttonApp(t *testing.T, torrents rtapi.Torrents) (*application, *fakeTelegr
 		noLive: true, state: &state{},
 	}
 	return app, telegramFake, rtorrentFake
+}
+
+// Chats are handled side by side: one waiting for rTorrent holds up only
+// itself. Each chat's updates are handled in order, and a chat whose
+// command takes a while shows the bot typing.
+func TestChatsAreHandledSideBySide(t *testing.T) {
+	app, telegramFake, rtorrentFake := buttonApp(t, handlerTorrents())
+	app.typingDelay = 200 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		app.wg.Wait()
+	}()
+	message := func(chatID int64, text string) *models.Update {
+		return &models.Update{Message: &models.Message{From: &models.User{ID: master}, Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate}, Text: text}}
+	}
+	stall := make(chan struct{})
+	var released sync.Once
+	release := func() { released.Do(func() { close(stall) }) }
+	defer release() // before the handlers are waited for, should the test fail
+	rtorrentFake.set(func(f *fakeRtorrent) { f.stall = stall })
+	app.dispatch(ctx, message(111, "list"))
+	app.dispatch(ctx, message(111, "help"))
+	app.dispatch(ctx, message(222, "help"))
+	if help := nextSent(t, telegramFake); help.chatID != 222 || help.text != helpText {
+		t.Fatalf("while chat 111 waits for rTorrent, chat 222 got %d %q", help.chatID, help.text)
+	}
+	// Chat 111's help, which needs nothing from rTorrent, waits its turn.
+	time.Sleep(500 * time.Millisecond)
+	if early := drain(telegramFake); len(early) != 0 {
+		t.Fatalf("answered before rTorrent did: %q", early)
+	}
+	release()
+	if list := nextSent(t, telegramFake); list.chatID != 111 || !strings.HasPrefix(list.text, "<aaa> Debian") {
+		t.Fatalf("first in chat 111 = %d %q", list.chatID, list.text)
+	}
+	if help := nextSent(t, telegramFake); help.chatID != 111 || help.text != helpText {
+		t.Fatalf("second in chat 111 = %d %q", help.chatID, help.text)
+	}
+	cancel()
+	app.wg.Wait()
+	telegramFake.mu.Lock()
+	defer telegramFake.mu.Unlock()
+	if telegramFake.chatActions != 1 {
+		t.Fatalf("the bot showed itself typing %d times, want once, for the command that waited", telegramFake.chatActions)
+	}
 }
 
 func command(app *application, text string) {
