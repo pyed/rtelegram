@@ -8,7 +8,8 @@ Manage rTorrent through a Telegram bot.
 
 Download a binary from the
 [release page](https://github.com/pyed/rtelegram/releases), or build with Go
-1.26 or newer:
+1.26 or newer; an older 1.26 fetches Go 1.26.9, the first without known
+vulnerabilities that affect rtelegram:
 
 ```sh
 go install github.com/pyed/rtelegram/v3@latest
