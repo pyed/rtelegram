@@ -237,39 +237,7 @@ func dataPath(torrent *rtapi.Torrent) string {
 	}
 }
 
-// sharedDataConflict refuses deletion when another loaded torrent overlaps the
-// target's data, or when rTorrent has not said where another torrent's data is.
-func sharedDataConflict(target *rtapi.Torrent, targetPath string, torrents rtapi.Torrents) error {
-	for _, other := range torrents {
-		if other == target {
-			continue
-		}
-		otherPath := dataPath(other)
-		if !filepath.IsAbs(otherPath) {
-			return fmt.Errorf("rTorrent did not report where %s keeps its data, so it may share this data; metadata was not deleted", other.Name)
-		}
-		if pathsOverlap(targetPath, otherPath) {
-			return fmt.Errorf("torrent data overlaps %s; metadata was not deleted", other.Name)
-		}
-	}
-	return nil
-}
-
-func pathsOverlap(left, right string) bool {
-	if left == "" || right == "" || !filepath.IsAbs(left) || !filepath.IsAbs(right) {
-		return false
-	}
-	left = canonicalPath(left)
-	right = canonicalPath(right)
-	for _, pair := range [][2]string{{left, right}, {right, left}} {
-		relative, err := filepath.Rel(pair[0], pair[1])
-		if err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))) {
-			return true
-		}
-	}
-	return false
-}
-
+// canonicalPath is path with symbolic links resolved, as far as they exist.
 func canonicalPath(path string) string {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err == nil {

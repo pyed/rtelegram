@@ -343,7 +343,7 @@ func TestBulkRemovalWithDataNeedsEveryTorrentsLocation(t *testing.T) {
 	press(app, master, list.messageID, "bk:deldata")
 	press(app, master, list.messageID, "bc")
 	app.wg.Wait()
-	if outcome := lastEdit(t, telegramFake).text; outcome != "Nothing was done: rTorrent did not report where unknown keeps its data, so it may share these torrents' data." ||
+	if outcome := lastEdit(t, telegramFake).text; outcome != "Nothing was done: rTorrent did not report where unknown keeps its data, which it may share." ||
 		len(rtorrentFake.called("d.erase")) != 0 || !exists(t, filepath.Join(root, "a")) {
 		t.Fatalf("outcome = %q", outcome)
 	}

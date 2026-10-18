@@ -280,35 +280,39 @@ func (a *application) deldata(ctx context.Context, chatID int64, arguments []str
 	}
 }
 
-// deleteWithData erases a torrent's metadata and then deletes its data. It
-// returns what happened, and whether the metadata was erased.
+// deleteWithData removes a torrent and deletes its data, with the safeguards
+// of removing many (removeTorrentsWithData). It returns what happened, and
+// whether rTorrent may have removed the torrent.
 func (a *application) deleteWithData(ctx context.Context, chatID int64, reference string) (string, bool) {
-	allTorrents, err := a.torrents(ctx, chatID)
+	if a.dataRoot == "" {
+		return "deldata: deldata is off; set -data-root to the directory on this machine where rTorrent keeps data", false
+	}
+	torrents, err := a.torrents(ctx, chatID)
 	if err != nil {
 		return "deldata: " + err.Error(), false
 	}
-	torrent, err := resolveTorrent(allTorrents, reference)
+	torrent, err := resolveTorrent(torrents, reference)
 	if err != nil {
 		return "deldata: " + err.Error(), false
 	}
-	targetPath := dataPath(torrent)
-	root, relative, err := validateTorrentData(a.dataRoot, targetPath)
-	if err != nil {
-		return "deldata: " + err.Error(), false
+	r := a.removeTorrentsWithData(ctx, []string{torrent.Hash})
+	switch {
+	case r.refused != "":
+		return "deldata: " + r.refused, false
+	case r.unchecked != nil:
+		return fmt.Sprintf("deldata: rTorrent was asked to remove %s, but the torrents could not be listed afterwards (%s), so its data was not deleted. Check the list before trying again.",
+			torrent.Name, r.unchecked), true
+	case len(r.targets) == 0:
+		return "deldata: " + torrent.Name + " is no longer loaded", false
 	}
-	defer root.Close()
-	if err := sharedDataConflict(torrent, targetPath, allTorrents); err != nil {
-		return "deldata: " + err.Error(), false
+	target := r.targets[0]
+	if reason, ok := r.kept[target]; ok {
+		return "deldata: " + reason, false
 	}
-	if err := a.rtorrent.DeleteMetadataContext(ctx, torrent); err != nil {
-		a.logger.Printf("deldata: %s", err)
-		return "deldata: " + err.Error(), false
+	if reason, ok := r.dataKept[target]; ok {
+		return fmt.Sprintf("Removed %s from rTorrent, but kept its data: %s", target.Name, reason), true
 	}
-	if err := root.RemoveAll(relative); err != nil {
-		a.logger.Printf("deldata local removal: %s", err)
-		return fmt.Sprintf("Deleted torrent metadata, but could not remove local data for %s: %s", torrent.Name, err), true
-	}
-	return "Deleted with data: " + torrent.Name, true
+	return "Deleted with data: " + target.Name, true
 }
 
 func (a *application) sort(ctx context.Context, chatID int64, arguments []string) {

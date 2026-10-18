@@ -264,6 +264,7 @@ func TestDataRootContainmentAndRemoval(t *testing.T) {
 			t.Fatalf("unsafe target %q accepted", unsafe)
 		}
 	}
+	pathsOverlap := func(left, right string) bool { return overlapCanonical(canonicalPath(left), canonicalPath(right)) }
 	if !pathsOverlap(child, filepath.Join(child, "nested")) || pathsOverlap(child, sibling) {
 		t.Fatal("path overlap detection is incorrect")
 	}
@@ -920,6 +921,27 @@ func TestAddConfirmsWhatRtorrentLoaded(t *testing.T) {
 	}
 }
 
+// deldata checks again once rTorrent has removed the torrent, as removing
+// many does: a torrent that appeared meanwhile without saying where its data
+// is keeps the data.
+func TestDeldataChecksAgainAfterRemoving(t *testing.T) {
+	root := t.TempDir()
+	app, telegramFake, rtorrentFake := buttonApp(t, rtapi.Torrents{dataTorrent(t, "show", "A", filepath.Join(root, "show"), false)})
+	app.dataRoot = root
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.onCall = func(method string) {
+			if method == "d.erase" {
+				f.torrents = append(f.torrents, &rtapi.Torrent{Name: "newcomer", Hash: strings.Repeat("B", 40), State: rtapi.Stopped})
+			}
+		}
+	})
+	command(app, "deldata "+strings.Repeat("A", 40)+" confirm")
+	if reply := nextSent(t, telegramFake).text; reply != "Removed show from rTorrent, but kept its data: rTorrent did not report where newcomer keeps its data, so it may share it" ||
+		!exists(t, filepath.Join(root, "show")) {
+		t.Fatalf("reply = %q", reply)
+	}
+}
+
 func TestDeldataRefusesUnknownOrSharedData(t *testing.T) {
 	targetHash := strings.Repeat("A", 40)
 	otherHash := strings.Repeat("B", 40)
@@ -936,19 +958,19 @@ func TestDeldataRefusesUnknownOrSharedData(t *testing.T) {
 				{Name: "show", Hash: targetHash, Path: show},
 				{Name: "extra", Hash: otherHash, Path: filepath.Join(show, "extra")},
 			}
-		}, "deldata: torrent data overlaps extra", false},
+		}, "deldata: its data overlaps that of extra, which stays", false},
 		{"unopened multi-file cross-seed", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
 				{Name: "show", Hash: targetHash, Path: show},
 				{Name: "show", Hash: otherHash, Directory: show, MultiFile: true},
 			}
-		}, "deldata: torrent data overlaps show", false},
+		}, "deldata: its data overlaps that of show, which stays", false},
 		{"unopened single-file inside the data", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
 				{Name: "show", Hash: targetHash, Path: show},
 				{Name: "episode.mkv", Hash: otherHash, Directory: show},
 			}
-		}, "deldata: torrent data overlaps episode.mkv", false},
+		}, "deldata: its data overlaps that of episode.mkv, which stays", false},
 		{"unopened single-file beside the data", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
 				{Name: "show", Hash: targetHash, Path: show},

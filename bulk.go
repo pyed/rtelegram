@@ -323,23 +323,51 @@ func (a *application) runBulk(ctx context.Context, chatID int64, bulk *bulkActio
 // is deleted only once rTorrent has let go of every torrent that used it. It
 // says what it did.
 func (a *application) removeWithData(ctx context.Context, hashes []string) string {
+	return a.removeTorrentsWithData(ctx, hashes).report()
+}
+
+// A removal is what removing torrents with their data did. deldata removes
+// one torrent this way, and lists remove many.
+type removal struct {
+	// refused says why nothing was done, when nothing was.
+	refused string
+	// targets are the torrents asked for that were loaded, as first listed;
+	// kept are those of them that stay loaded, with their data, and why.
+	targets rtapi.Torrents
+	kept    map[*rtapi.Torrent]string
+	// erased are the targets rTorrent removed, and dataKept those of them
+	// whose data stays, and why.
+	erased   rtapi.Torrents
+	dataKept map[*rtapi.Torrent]string
+	// unchecked is why the torrents could not be listed after leaving many
+	// were removed, so that no data was deleted.
+	unchecked error
+	leaving   int
+}
+
+// removeTorrentsWithData removes torrents, named by hash, and deletes their
+// data, as removeWithData describes, and says what it did.
+func (a *application) removeTorrentsWithData(ctx context.Context, hashes []string) removal {
+	r := removal{kept: make(map[*rtapi.Torrent]string), dataKept: make(map[*rtapi.Torrent]string)}
 	if a.dataRoot == "" {
-		return "Nothing was done: deleting data is off; set -data-root to the directory on this machine where rTorrent keeps data."
+		r.refused = "deleting data is off; set -data-root to the directory on this machine where rTorrent keeps data"
+		return r
 	}
 	all, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
 	if err != nil {
-		return "Nothing was done: " + err.Error()
+		r.refused = err.Error()
+		return r
 	}
 	paths, unknown := canonicalPaths(all)
 	if unknown != nil {
-		return fmt.Sprintf("Nothing was done: rTorrent did not report where %s keeps its data, so it may share these torrents' data.", unknown.Name)
+		r.refused = fmt.Sprintf("rTorrent did not report where %s keeps its data, which it may share", unknown.Name)
+		return r
 	}
-	targets := bulkTargets(all, hashes)
-	kept := make(map[*rtapi.Torrent]string) // the targets that stay loaded, and why
+	r.targets = bulkTargets(all, hashes)
 	going := make(map[*rtapi.Torrent]bool)
-	for _, torrent := range targets {
+	for _, torrent := range r.targets {
 		if err := a.checkDeletable(torrent); err != nil {
-			kept[torrent] = err.Error()
+			r.kept[torrent] = err.Error()
 			continue
 		}
 		going[torrent] = true
@@ -355,64 +383,79 @@ func (a *application) removeWithData(ctx context.Context, hashes []string) strin
 	}
 	for changed := true; changed; {
 		changed = false
-		for _, torrent := range targets {
+		for _, torrent := range r.targets {
 			if !going[torrent] {
 				continue
 			}
 			if stays := slices.IndexFunc(overlaps[torrent], func(other *rtapi.Torrent) bool { return !going[other] }); stays >= 0 {
 				delete(going, torrent)
-				kept[torrent] = "its data overlaps that of " + overlaps[torrent][stays].Name + ", which stays"
+				r.kept[torrent] = "its data overlaps that of " + overlaps[torrent][stays].Name + ", which stays"
 				changed = true
 			}
 		}
 	}
 
-	leaving := filterTorrents(targets, func(torrent *rtapi.Torrent) bool { return going[torrent] })
-	var erased rtapi.Torrents
-	dataKept := make(map[*rtapi.Torrent]string) // the erased torrents whose data stays, and why
-	if len(leaving) > 0 {
-		eraseErr := a.rtorrent.DeleteMetadataContext(ctx, leaving...)
-		fresh, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
-		if err != nil {
-			// Which torrents went is unknown, so no data is deleted.
-			a.logger.Printf("[ERROR] listing torrents after removing %d: %s", len(leaving), err)
-			return fmt.Sprintf("rTorrent was asked to remove %s, but they could not be listed afterwards (%s), so no data was deleted. Check the list before trying again.",
-				plural(len(leaving), "torrent"), err) + keptReport(targets, kept)
+	leaving := filterTorrents(r.targets, func(torrent *rtapi.Torrent) bool { return going[torrent] })
+	if len(leaving) == 0 {
+		return r
+	}
+	eraseErr := a.rtorrent.DeleteMetadataContext(ctx, leaving...)
+	fresh, err := a.rtorrent.ListContext(ctx, rtapi.ListOptions{})
+	if err != nil {
+		// Which torrents went is unknown, so no data is deleted.
+		a.logger.Printf("[ERROR] listing torrents after removing %d: %s", len(leaving), err)
+		r.unchecked, r.leaving = err, len(leaving)
+		return r
+	}
+	r.erased, r.dataKept = a.deleteErasedData(leaving, paths, fresh)
+	for _, torrent := range leaving {
+		if slices.Contains(r.erased, torrent) {
+			continue
 		}
-		erased, dataKept = a.deleteErasedData(leaving, paths, fresh)
-		for _, torrent := range leaving {
-			if slices.Contains(erased, torrent) {
-				continue
-			}
-			kept[torrent] = "rTorrent did not remove it"
-			if eraseErr != nil {
-				kept[torrent] += ": " + eraseErr.Error()
-			}
-		}
+		r.kept[torrent] = "rTorrent did not remove it"
 		if eraseErr != nil {
-			a.logger.Printf("[ERROR] removing %d torrents with their data: %s", len(leaving), eraseErr)
+			r.kept[torrent] += ": " + eraseErr.Error()
 		}
 	}
+	if eraseErr != nil {
+		a.logger.Printf("[ERROR] removing %d torrents with their data: %s", len(leaving), eraseErr)
+	}
+	return r
+}
 
+// deleted returns the torrents removed with their data.
+func (r removal) deleted() rtapi.Torrents {
+	return filterTorrents(r.erased, func(torrent *rtapi.Torrent) bool {
+		_, kept := r.dataKept[torrent]
+		return !kept
+	})
+}
+
+// report says what a removal of many torrents did.
+func (r removal) report() string {
+	switch {
+	case r.refused != "":
+		return "Nothing was done: " + r.refused + "."
+	case r.unchecked != nil:
+		return fmt.Sprintf("rTorrent was asked to remove %s, but they could not be listed afterwards (%s), so no data was deleted. Check the list before trying again.",
+			plural(r.leaving, "torrent"), r.unchecked) + keptReport(r.targets, r.kept)
+	}
 	var report strings.Builder
-	var deleted rtapi.Torrents
 	var size uint64
-	for _, torrent := range erased {
-		if _, ok := dataKept[torrent]; !ok {
-			deleted = append(deleted, torrent)
-			size += torrent.Completed
-		}
+	deleted := r.deleted()
+	for _, torrent := range deleted {
+		size += torrent.Completed
 	}
 	switch {
 	case len(deleted) > 0:
 		fmt.Fprintf(&report, "Removed %s and deleted their data, %s.%s", plural(len(deleted), "torrent"), formatBytes(size), namesOf(deleted))
-	case len(erased) == 0:
+	case len(r.erased) == 0:
 		report.WriteString("Nothing was removed.")
 	}
-	if len(dataKept) > 0 {
-		fmt.Fprintf(&report, "\n\nRemoved %s from rTorrent, but kept their data:%s", plural(len(dataKept), "torrent"), reasons(erased, dataKept))
+	if len(r.dataKept) > 0 {
+		fmt.Fprintf(&report, "\n\nRemoved %s from rTorrent, but kept their data:%s", plural(len(r.dataKept), "torrent"), reasons(r.erased, r.dataKept))
 	}
-	report.WriteString(keptReport(targets, kept))
+	report.WriteString(keptReport(r.targets, r.kept))
 	return strings.TrimLeft(report.String(), "\n")
 }
 
