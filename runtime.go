@@ -440,7 +440,13 @@ func transientFailure(err error) bool {
 	}
 	var urlErr *url.Error
 	text := err.Error()
-	return telegramServerError.MatchString(text) || strings.Contains(text, "error decode response body") || errors.As(err, &urlErr)
+	if strings.Contains(text, "error decode response body") {
+		// A page that is not Telegram's JSON, as a proxy in front of it gives
+		// while Telegram is down; not Telegram's own answer that the library
+		// could not decode, as a supergroup's ID on 32-bit systems.
+		return !strings.Contains(text, `"ok":false`)
+	}
+	return telegramServerError.MatchString(text) || errors.As(err, &urlErr)
 }
 
 func (a *application) edit(ctx context.Context, chatID int64, messageID int, text string) error {

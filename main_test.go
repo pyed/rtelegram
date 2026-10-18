@@ -659,6 +659,24 @@ func TestSendRetriesFailuresAMomentMayCure(t *testing.T) {
 	}
 }
 
+// Telegram's own answers that the library could not decode, such as a
+// supergroup's ID on 32-bit systems, are not passing failures; a page in
+// front of Telegram while it is down is.
+func TestTransientFailures(t *testing.T) {
+	for text, want := range map[string]bool{
+		`error decode response body for method sendMessage, <html><body>502 Bad Gateway</body></html>, invalid character '<'`: true,
+		`error decode response body for method sendMessage, {"ok":false,"error_code":400,"description":"Bad Request: group chat was upgraded to a supergroup chat",` +
+			`"parameters":{"migrate_to_chat_id":-1001234567890}}, json: cannot unmarshal number -1001234567890 into Go struct field of type int`: false,
+		"error response from telegram for method sendMessage, 502 Bad Gateway": true,
+		"error response from telegram for method sendMessage, 420 Flood":       false,
+		"bad request, Bad Request: message is too long":                        false,
+	} {
+		if got := transientFailure(errors.New(text)); got != want {
+			t.Errorf("transientFailure(%.60q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
 func TestSendGivesUpOnLongRateLimits(t *testing.T) {
 	fake := &fakeTelegram{rateLimited: 1, retryAfter: 3600}
 	app := &application{bot: newTestBot(t, fake, "123:SECRET"), logger: log.New(io.Discard, "", 0), token: "123:SECRET"}
