@@ -113,7 +113,8 @@ Flags, with the environment variables that can replace them:
   address such as `localhost:5000`), it defaults to rTorrent's download
   directory; for a remote rTorrent, set it to where that data is mounted
   locally, if anywhere. `-data-root off` turns both off. The log says which
-  applies at startup.
+  applies at startup; when rTorrent is not answering yet, they stay off
+  until it says where its download directory is.
 - **Notifications.** `-watch-interval` is how often the bot checks rTorrent
   (default 30s), `-stall-after` how long a download may go without progress
   before it counts as stalled (default 30m; 0 turns it off), and `-low-disk`
@@ -428,7 +429,9 @@ about. Each is a button to turn on or off:
   `-low-disk`. The bot warns again only after space recovers.
 - **rTorrent down or restarted**: when rTorrent has not answered for a minute,
   when it answers again and after how long, and when it restarted, which the
-  bot tells from its process ID, even between two checks.
+  bot tells from its process ID, even between two checks. The bot starts
+  while rTorrent is down, as after a reboot that starts rTorrent later, so it
+  can say so.
 
 `/notify on` and `/notify off` turn everything on or off at once. In a group
 with topics, notifications go to the topic `/notify` was sent from.

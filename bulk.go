@@ -98,7 +98,7 @@ func (a *application) bulkAllows(spec listSpec, action string) bool {
 	case bulkDel:
 		return spec.kind != "list" || spec.query != ""
 	case bulkDelData:
-		return a.dataRoot != "" && (spec.kind != "list" || spec.query != "")
+		return a.dataRootPath() != "" && (spec.kind != "list" || spec.query != "")
 	}
 	return false
 }
@@ -354,7 +354,7 @@ type removal struct {
 // data, as removeWithData describes, and says what it did.
 func (a *application) removeTorrentsWithData(ctx context.Context, hashes []string) removal {
 	r := removal{kept: make(map[*rtapi.Torrent]string)}
-	if a.dataRoot == "" {
+	if a.dataRootPath() == "" {
 		r.refused = "deleting data is off; set -data-root to the directory on this machine where rTorrent keeps data"
 		return r
 	}
@@ -516,7 +516,7 @@ func (a *application) deleteErasedData(leaving rtapi.Torrents, paths map[*rtapi.
 			dataKept[torrent] = "its data overlaps that of " + fresh[user].Name + ", which is loaded"
 			continue
 		}
-		root, relative, err := validateTorrentData(a.dataRoot, dataPath(torrent))
+		root, relative, err := validateTorrentData(a.dataRootPath(), dataPath(torrent))
 		if errors.Is(err, fs.ErrNotExist) && slices.ContainsFunc(removed, func(other *rtapi.Torrent) bool { return containsPath(paths[other], path) }) {
 			continue // it went with data deleted before, such as a cross-seed's
 		}
@@ -605,11 +605,11 @@ func countFiles(folder *os.Root) (int, error) {
 // filesLeft counts the files left at path, a torrent's data inside the data
 // root: none when it is gone or is a file, which deleting removed.
 func (a *application) filesLeft(path string) int {
-	relative, err := containedRelative(a.dataRoot, path)
+	relative, err := containedRelative(a.dataRootPath(), path)
 	if err != nil {
 		return 0
 	}
-	root, err := os.OpenRoot(a.dataRoot)
+	root, err := os.OpenRoot(a.dataRootPath())
 	if err != nil {
 		return 0
 	}
@@ -651,7 +651,7 @@ func reasons(torrents rtapi.Torrents, why map[*rtapi.Torrent]string) string {
 // checkDeletable says why a torrent's data cannot be deleted, if it cannot:
 // it must be inside -data-root, exist, and not be a symbolic link.
 func (a *application) checkDeletable(torrent *rtapi.Torrent) error {
-	root, _, err := validateTorrentData(a.dataRoot, dataPath(torrent))
+	root, _, err := validateTorrentData(a.dataRootPath(), dataPath(torrent))
 	if errors.Is(err, fs.ErrNotExist) {
 		return errors.New("it has no data where rTorrent says, so remove it without its data instead")
 	}

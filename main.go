@@ -110,12 +110,15 @@ type application struct {
 	now           func() time.Time // the clock; nil means time.Now
 	indexer       *indexer         // nil without -indexer-url
 	feedInterval  time.Duration
-	dataRoot      string
-	downloadRoot  string
-	addStopped    bool
-	noLive        bool
-	interval      time.Duration
-	duration      int
+	// dataRoot is read through dataRootPath, since it may be set while the
+	// bot runs; dataRootMu guards it.
+	dataRoot     string
+	dataRootMu   sync.RWMutex
+	downloadRoot string
+	addStopped   bool
+	noLive       bool
+	interval     time.Duration
+	duration     int
 	// addTimeout bounds how long an add waits for rTorrent to load the torrent.
 	addTimeout      time.Duration
 	addPollInterval time.Duration
@@ -212,12 +215,17 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if err != nil {
 		return fmt.Errorf("telegram authorization: %s", redact(cfg.token, err.Error()))
 	}
-	rtorrent, err := rtapi.NewRtorrentContext(ctx, cfg.rtorrentAddress)
+	// rTorrent may not be answering yet, as after a reboot that starts the
+	// bot first; the bot starts anyway, and can say when rTorrent is down.
+	rtorrent, err := rtapi.NewClient(cfg.rtorrentAddress)
 	if err != nil {
 		return fmt.Errorf("rTorrent: %w", err)
 	}
 	rtorrent.MaxResponseSize = cfg.maxResponseMiB << 20
-	dataRoot, dataRootNote := chooseDataRoot(ctx, cfg, rtorrent)
+	startupCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
+	_, rtorrentErr := rtorrent.GetVersionContext(startupCtx)
+	dataRoot, dataRootNote, dataRootPending := chooseDataRoot(startupCtx, cfg, rtorrent)
+	cancel()
 
 	app = &application{
 		bot:             b,
@@ -242,11 +250,18 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		state:           appState,
 	}
 	logger.Printf("[INFO] Authorized as @%s; rTorrent=%s", me.Username, redactAddress(cfg.rtorrentAddress))
+	if rtorrentErr != nil {
+		logger.Printf("[WARN] rTorrent is not answering (%s); rtelegram runs anyway, and /notify can tell chats when rTorrent is down and back",
+			redact(cfg.token, rtorrentErr.Error()))
+	}
 	logger.Printf("[INFO] %s", dataRootNote)
 	if cfg.masters.setup() {
 		logger.Printf("[INFO] Setup: the only master is %d, a placeholder. Send @%s a private message from your Telegram account: "+
 			"it replies with your user ID, which also appears in this log. Then restart with RT_MASTERS (or -masters) set to that ID.",
 			setupMaster, me.Username)
+	}
+	if dataRootPending {
+		app.launch(ctx, func(ctx context.Context) { app.resolveDataRoot(ctx, cfg, dataRootRetry) })
 	}
 	app.launch(ctx, app.registerCommands)
 	app.launch(ctx, app.watchEvents)

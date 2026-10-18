@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-telegram/bot/models"
 )
@@ -20,7 +21,7 @@ func TestDataRootDefaultsToALocalRTorrentsDirectory(t *testing.T) {
 	local := config{rtorrentAddress: "localhost:5000"}
 
 	rtorrentFake.set(func(f *fakeRtorrent) { f.directory = downloads + string(filepath.Separator) })
-	if root, note := chooseDataRoot(ctx, local, client); root != downloads || !strings.Contains(note, "rTorrent's download directory") {
+	if root, note, pending := chooseDataRoot(ctx, local, client); root != downloads || !strings.Contains(note, "rTorrent's download directory") || pending {
 		t.Fatalf("local rTorrent: %q, %q", root, note)
 	}
 	file := filepath.Join(downloads, "file")
@@ -31,7 +32,7 @@ func TestDataRootDefaultsToALocalRTorrentsDirectory(t *testing.T) {
 	// exists here, but means rtelegram's directory.
 	for _, directory := range []string{"./", ".", "~/downloads", filepath.Join(downloads, "missing"), file, ""} {
 		rtorrentFake.set(func(f *fakeRtorrent) { f.directory = directory })
-		if root, note := chooseDataRoot(ctx, local, client); root != "" || !strings.Contains(note, "set -data-root") {
+		if root, note, pending := chooseDataRoot(ctx, local, client); root != "" || !strings.Contains(note, "set -data-root") || pending {
 			t.Errorf("rTorrent directory %q: %q, %q", directory, root, note)
 		}
 	}
@@ -39,7 +40,7 @@ func TestDataRootDefaultsToALocalRTorrentsDirectory(t *testing.T) {
 	// Paths from another machine mean nothing here, so rTorrent is not asked.
 	before := len(rtorrentFake.called("directory.default"))
 	remote := config{rtorrentAddress: "https://user:pass@seedbox.example/RPC2"}
-	if root, note := chooseDataRoot(ctx, remote, client); root != "" || !strings.Contains(note, "another machine") {
+	if root, note, _ := chooseDataRoot(ctx, remote, client); root != "" || !strings.Contains(note, "another machine") {
 		t.Fatalf("remote rTorrent: %q, %q", root, note)
 	}
 	if len(rtorrentFake.called("directory.default")) != before {
@@ -47,12 +48,50 @@ func TestDataRootDefaultsToALocalRTorrentsDirectory(t *testing.T) {
 	}
 
 	explicit := config{rtorrentAddress: "seedbox:5000", dataRoot: downloads}
-	if root, _ := chooseDataRoot(ctx, explicit, client); root != downloads {
+	if root, _, _ := chooseDataRoot(ctx, explicit, client); root != downloads {
 		t.Fatalf("explicit -data-root = %q", root)
 	}
 	off := config{rtorrentAddress: "localhost:5000", dataRoot: dataRootOff}
-	if root, note := chooseDataRoot(ctx, off, client); root != "" || !strings.Contains(note, "off") {
+	if root, note, _ := chooseDataRoot(ctx, off, client); root != "" || !strings.Contains(note, "off") {
 		t.Fatalf("-data-root off = %q, %q", root, note)
+	}
+}
+
+// rTorrent may start after rtelegram. Until it answers, /get and deldata
+// are off; once it says where it keeps data, they work there.
+func TestDataRootWaitsForRTorrent(t *testing.T) {
+	downloads := t.TempDir()
+	rtorrentFake, client := newFakeRtorrent(t)
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.directory = downloads
+		f.faults = map[string]bool{"directory.default": true}
+	})
+	cfg := config{rtorrentAddress: "localhost:5000"}
+	if root, note, pending := chooseDataRoot(context.Background(), cfg, client); root != "" || !pending || !strings.Contains(note, "until rTorrent answers") {
+		t.Fatalf("rTorrent not answering: %q, %q, %v", root, note, pending)
+	}
+
+	var logs bytes.Buffer
+	app := &application{rtorrent: client, logger: log.New(&logs, "", 0)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		app.resolveDataRoot(ctx, cfg, 10*time.Millisecond)
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if root := app.dataRootPath(); root != "" {
+		t.Fatalf("data root while rTorrent does not answer = %q", root)
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.faults = nil })
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the data root was not resolved once rTorrent answered")
+	}
+	if root := app.dataRootPath(); root != downloads || !strings.Contains(logs.String(), "rTorrent answered: /get and deldata work beneath") {
+		t.Fatalf("data root = %q, log %q", root, logs.String())
 	}
 }
 

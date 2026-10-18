@@ -284,7 +284,7 @@ func (a *application) deldata(ctx context.Context, chatID int64, arguments []str
 		message, _ := a.deleteWithData(ctx, chatID, arguments[0])
 		a.send(ctx, chatID, message)
 	case len(arguments) == 1:
-		if a.dataRoot == "" {
+		if a.dataRootPath() == "" {
 			a.send(ctx, chatID, "deldata: deldata is off; set -data-root to the directory on this machine where rTorrent keeps data")
 			return
 		}
@@ -306,7 +306,7 @@ func (a *application) deldata(ctx context.Context, chatID int64, arguments []str
 // of removing many (removeTorrentsWithData). It returns what happened, and
 // whether rTorrent may have removed the torrent.
 func (a *application) deleteWithData(ctx context.Context, chatID int64, reference string) (string, bool) {
-	if a.dataRoot == "" {
+	if a.dataRootPath() == "" {
 		return "deldata: deldata is off; set -data-root to the directory on this machine where rTorrent keeps data", false
 	}
 	torrents, err := a.torrents(ctx, chatID)

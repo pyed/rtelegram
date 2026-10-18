@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pyed/rtapi"
 )
@@ -137,26 +138,57 @@ func mkdirOwned(dir string, uid, gid int) error {
 // may read and delete data, and a line for the log saying why. Without
 // -data-root it is rTorrent's download directory, when rTorrent runs on this
 // machine and that directory exists here: rTorrent reports paths on its own
-// machine, which mean nothing, or something else, on another.
-func chooseDataRoot(ctx context.Context, cfg config, rtorrent *rtapi.Rtorrent) (string, string) {
+// machine, which mean nothing, or something else, on another. pending
+// reports that rTorrent did not answer, so it is worth asking again.
+func chooseDataRoot(ctx context.Context, cfg config, rtorrent *rtapi.Rtorrent) (root, note string, pending bool) {
 	switch cfg.dataRoot {
 	case dataRootOff:
-		return "", "/get and deldata are off (-data-root off)"
+		return "", "/get and deldata are off (-data-root off)", false
 	case "":
 	default:
-		return cfg.dataRoot, "/get and deldata work beneath " + cfg.dataRoot
+		return cfg.dataRoot, "/get and deldata work beneath " + cfg.dataRoot, false
 	}
 	if !localAddress(cfg.rtorrentAddress) {
-		return "", "/get and deldata are off: rTorrent runs on another machine, so set -data-root to where its data is reachable here"
+		return "", "/get and deldata are off: rTorrent runs on another machine, so set -data-root to where its data is reachable here", false
 	}
 	stats, err := rtorrent.StatsContext(ctx)
 	if err != nil {
-		return "", "/get and deldata are off: rTorrent's download directory is unknown (" + err.Error() + "); set -data-root"
+		return "", "/get and deldata are off until rTorrent answers and says where it keeps data (" + err.Error() + "), or set -data-root", true
 	}
 	if dir := localDirectory(stats.Directory); dir != "" {
-		return dir, "/get and deldata work beneath rTorrent's download directory, " + dir + " (set -data-root to change it, or -data-root off)"
+		return dir, "/get and deldata work beneath rTorrent's download directory, " + dir + " (set -data-root to change it, or -data-root off)", false
 	}
-	return "", fmt.Sprintf("/get and deldata are off: rTorrent's download directory %q is not a directory here; set -data-root", stats.Directory)
+	return "", fmt.Sprintf("/get and deldata are off: rTorrent's download directory %q is not a directory here; set -data-root", stats.Directory), false
+}
+
+// dataRootRetry is how often rtelegram asks rTorrent for its download
+// directory, for the data root, until rTorrent answers.
+const dataRootRetry = 30 * time.Second
+
+// resolveDataRoot asks rTorrent for its download directory every retry until
+// it answers, and then makes the data root it chooses the bot's: rTorrent may
+// start after rtelegram, as after a reboot.
+func (a *application) resolveDataRoot(ctx context.Context, cfg config, retry time.Duration) {
+	for waitFor(ctx, retry) {
+		root, note, pending := chooseDataRoot(ctx, cfg, a.rtorrent)
+		if pending {
+			continue
+		}
+		a.dataRootMu.Lock()
+		a.dataRoot = root
+		a.dataRootMu.Unlock()
+		a.logger.Printf("[INFO] rTorrent answered: %s", note)
+		return
+	}
+}
+
+// dataRootPath is the directory beneath which /get and deldata work, or ""
+// while they are off. It is set at most once after startup, when rTorrent
+// first says where it keeps data, and never changes after.
+func (a *application) dataRootPath() string {
+	a.dataRootMu.RLock()
+	defer a.dataRootMu.RUnlock()
+	return a.dataRoot
 }
 
 // localAddress reports whether address reaches rTorrent on this machine: a

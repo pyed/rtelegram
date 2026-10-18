@@ -113,6 +113,11 @@ func TestCommandHandlers(t *testing.T) {
 			"Loaded torrents uploaded: 3.5 KiB\nLoaded torrents downloaded: 3.5 KiB\nLoaded torrents ratio: 1.00"}}, nil},
 		{"speed", []string{"ss"}, []reply{{is: "↓ 2.0 KiB ↑ 1.0 KiB"}}, nil},
 		{"version", []string{"version"}, []reply{{is: "rTorrent/libtorrent: 0.9.8/0.13.8\nrtelegram: " + version}}, nil},
+		{"version asks rTorrent each time", []string{"version", "version"}, []reply{{has: []string{"0.9.8"}}, {has: []string{"0.9.8"}}}, func(t *testing.T, rtorrentFake *fakeRtorrent) {
+			if asked := rtorrentFake.countCalls("system.client_version"); asked != 3 { // once to connect
+				t.Errorf("asked rTorrent's version %d times, want 3", asked)
+			}
+		}},
 		{"help", []string{"help"}, []reply{{is: helpText}}, nil},
 		{"start alone, as Telegram sends it when a chat opens", []string{"/start"}, []reply{{is: helpText}}, calledWith("d.start")},
 		{"unknown", []string{"bogus"}, []reply{{is: "no such command, try /help"}}, nil},

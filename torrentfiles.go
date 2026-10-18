@@ -160,7 +160,7 @@ func (a *application) renderFile(torrent *rtapi.Torrent, file rtapi.File, count 
 	switch {
 	case unsendable == nil:
 		rows = append(rows, []models.InlineKeyboardButton{button("📥 Send", "fg:"+strconv.Itoa(file.Index))})
-	case a.dataRoot == "":
+	case a.dataRootPath() == "":
 		text.WriteString("\nSending files is off; see -data-root.")
 	case !file.Complete():
 		text.WriteString("\nIt can be sent once it has downloaded.")
@@ -345,7 +345,7 @@ func fileLocation(torrent *rtapi.Torrent, file rtapi.File) string {
 // its path inside -data-root. It looks at the file through the data root,
 // so symbolic links cannot lead outside.
 func (a *application) checkUpload(torrent *rtapi.Torrent, file rtapi.File) (string, error) {
-	if a.dataRoot == "" {
+	if a.dataRootPath() == "" {
 		return "", errors.New("sending files is off; set -data-root to the directory on this machine where rTorrent keeps data")
 	}
 	if !file.Complete() {
@@ -358,11 +358,11 @@ func (a *application) checkUpload(torrent *rtapi.Torrent, file rtapi.File) (stri
 	if location == "" {
 		return "", errors.New("rTorrent has not reported where this torrent keeps its data")
 	}
-	relative, err := containedRelative(a.dataRoot, location)
+	relative, err := containedRelative(a.dataRootPath(), location)
 	if err != nil {
 		return "", err
 	}
-	root, err := os.OpenRoot(a.dataRoot)
+	root, err := os.OpenRoot(a.dataRootPath())
 	if err != nil {
 		return "", fmt.Errorf("open data root: %w", err)
 	}
@@ -384,7 +384,7 @@ func (a *application) upload(ctx context.Context, chatID int64, torrent *rtapi.T
 	if err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(a.dataRoot)
+	root, err := os.OpenRoot(a.dataRootPath())
 	if err != nil {
 		return fmt.Errorf("open data root: %w", err)
 	}

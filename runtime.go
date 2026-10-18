@@ -349,8 +349,14 @@ func (a *application) editChanged(ctx context.Context, chatID int64, messageID i
 	return nil
 }
 
+// getVersion answers /version, asking rTorrent for its version each time:
+// it may have been upgraded, or not answered when rtelegram started.
 func (a *application) getVersion(ctx context.Context, chatID int64) {
-	a.send(ctx, chatID, fmt.Sprintf("rTorrent/libtorrent: %s\nrtelegram: %s", a.rtorrent.Version, version))
+	rtorrentVersion, err := a.rtorrent.GetVersionContext(ctx)
+	if err != nil {
+		rtorrentVersion = "not answering (" + err.Error() + ")"
+	}
+	a.send(ctx, chatID, fmt.Sprintf("rTorrent/libtorrent: %s\nrtelegram: %s", rtorrentVersion, version))
 }
 
 // torrents lists every torrent in chatID's sort order, without trackers:

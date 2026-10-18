@@ -260,7 +260,7 @@ func (a *application) renderCard(torrent *rtapi.Torrent, scr *screen) (string, *
 		toggle = button("▶ Start", "a:start")
 	}
 	removals := []models.InlineKeyboardButton{button("🗑 Remove", "a:del")}
-	if a.dataRoot != "" {
+	if a.dataRootPath() != "" {
 		removals = append(removals, button("💣 Remove + data", "a:deldata"))
 	}
 	last := []models.InlineKeyboardButton{button("📂 Files", "files"), button("🔄 Refresh", "a:refresh")}
