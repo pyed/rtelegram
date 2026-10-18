@@ -191,6 +191,25 @@ func (a *application) dataRootPath() string {
 	return a.dataRoot
 }
 
+// securityWarnings says, for the log, what in cfg lets others control
+// rTorrent or read a secret.
+func securityWarnings(cfg config) []string {
+	var warnings []string
+	address := cfg.rtorrentAddress
+	if parsed, err := url.Parse(address); err == nil && (strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")) {
+		if strings.EqualFold(parsed.Scheme, "http") && parsed.User != nil && !localAddress(address) {
+			warnings = append(warnings, "rTorrent's password crosses the network readably over http://; use https://")
+		}
+	} else if host, port, err := net.SplitHostPort(address); err == nil && !strings.ContainsAny(host+port, `/\`) {
+		warnings = append(warnings, fmt.Sprintf("rTorrent's SCGI port %s takes commands, which can run programs as rTorrent's user, from anyone who can "+
+			"connect to it, other users of this machine included; a socket file (network.scgi.open_local) can be kept to rTorrent's user", address))
+	}
+	if parsed, err := url.Parse(cfg.indexerURL); err == nil && strings.EqualFold(parsed.Scheme, "http") && !localAddress(cfg.indexerURL) {
+		warnings = append(warnings, "the indexer's API key crosses the network readably over http://; use https://")
+	}
+	return warnings
+}
+
 // localAddress reports whether address reaches rTorrent on this machine: a
 // socket path, or a loopback host.
 func localAddress(address string) bool {

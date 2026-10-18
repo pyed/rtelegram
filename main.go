@@ -264,6 +264,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 			redact(cfg.token, rtorrentErr.Error()))
 	}
 	logger.Printf("[INFO] %s", dataRootNote)
+	for _, warning := range securityWarnings(cfg) {
+		logger.Printf("[WARN] %s", warning)
+	}
 	if cfg.masters.setup() {
 		logger.Printf("[INFO] Setup: the only master is %d, a placeholder. Send @%s a private message from your Telegram account: "+
 			"it replies with your user ID, which also appears in this log. Then restart with RT_MASTERS (or -masters) set to that ID.",

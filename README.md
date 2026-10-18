@@ -542,8 +542,11 @@ From v1, also:
 ## Security
 
 rTorrent's RPC interface has no authentication and should never be exposed to an
-untrusted network. Use a permission-protected local socket where possible and
-follow rTorrent's
+untrusted network. Use a permission-protected local socket where possible: an
+SCGI port, even `localhost:5000`, lets every user of the machine run programs
+as rTorrent's user, and the log says so at startup, as it does when a password
+or the indexer key would cross the network over plain `http://`. Follow
+rTorrent's
 [official XML-RPC security guidance](https://github.com/rakshasa/rtorrent-doc/blob/master/RPC-Setup-XMLRPC.md).
 Treat the Telegram token, the authorized user list, the indexer key, the
 `-config` and `-state` files (which the bot writes with private permissions),

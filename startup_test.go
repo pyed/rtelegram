@@ -95,6 +95,38 @@ func TestDataRootWaitsForRTorrent(t *testing.T) {
 	}
 }
 
+// The log warns of an SCGI port, which anyone who can connect to it can
+// control rTorrent through, and of secrets sent readably over the network.
+func TestSecurityWarnings(t *testing.T) {
+	for _, test := range []struct {
+		cfg  config
+		want []string
+	}{
+		{config{rtorrentAddress: "/run/rtorrent/rpc.socket"}, nil},
+		{config{rtorrentAddress: `C:\rtorrent\rpc.socket`}, nil},
+		{config{rtorrentAddress: "localhost:5000"}, []string{"SCGI port localhost:5000 takes commands"}},
+		{config{rtorrentAddress: "seedbox:5000"}, []string{"SCGI port seedbox:5000"}},
+		{config{rtorrentAddress: "https://user:pass@seedbox.example/RPC2"}, nil},
+		{config{rtorrentAddress: "http://seedbox.example/RPC2"}, nil},
+		{config{rtorrentAddress: "http://user:pass@localhost/RPC2"}, nil},
+		{config{rtorrentAddress: "http://user:pass@seedbox.example/RPC2"}, []string{"rTorrent's password crosses the network"}},
+		{config{rtorrentAddress: "/rpc.socket", indexerURL: "http://localhost:9696/1/api"}, nil},
+		{config{rtorrentAddress: "/rpc.socket", indexerURL: "https://indexer.example/api"}, nil},
+		{config{rtorrentAddress: "/rpc.socket", indexerURL: "http://indexer.example/api"}, []string{"indexer's API key crosses the network"}},
+	} {
+		got := securityWarnings(test.cfg)
+		if len(got) != len(test.want) {
+			t.Errorf("%+v: warnings %q, want %d", test.cfg, got, len(test.want))
+			continue
+		}
+		for i, want := range test.want {
+			if !strings.Contains(got[i], want) {
+				t.Errorf("%+v: warning %q lacks %q", test.cfg, got[i], want)
+			}
+		}
+	}
+}
+
 func TestLocalAddress(t *testing.T) {
 	for address, want := range map[string]bool{
 		"/run/rtorrent/rpc.socket":               true,
