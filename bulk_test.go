@@ -268,6 +268,18 @@ func dataTorrent(t *testing.T, name, hash, dir string, absent bool) *rtapi.Torre
 	return &rtapi.Torrent{Name: name, Hash: strings.Repeat(hash, 40), State: rtapi.Seeding, Path: dir, Directory: dir, MultiFile: true, Completed: 1 << 20}
 }
 
+// dataFiles lists, for the fake rTorrent, the file dataTorrent made for each
+// multi-file torrent, as rTorrent lists its files.
+func dataFiles(torrents rtapi.Torrents) map[string][]rtapi.File {
+	files := make(map[string][]rtapi.File)
+	for _, torrent := range torrents {
+		if torrent.MultiFile {
+			files[torrent.Hash] = []rtapi.File{{Path: torrent.Name + ".bin", Size: uint64(len(torrent.Name))}}
+		}
+	}
+	return files
+}
+
 func exists(t *testing.T, path string) bool {
 	t.Helper()
 	_, err := os.Stat(path)
@@ -294,7 +306,10 @@ func TestBulkRemovalWithDataDeletesOnlyWhatNothingElseUses(t *testing.T) {
 	}
 	app, telegramFake, rtorrentFake := buttonApp(t, torrents)
 	app.dataRoot = root
-	rtorrentFake.set(func(f *fakeRtorrent) { f.faults = map[string]bool{"d.erase " + strings.Repeat("2", 40): true} })
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.faults = map[string]bool{"d.erase " + strings.Repeat("2", 40): true}
+		f.files = dataFiles(torrents)
+	})
 
 	command(app, "search x-")
 	list := nextSent(t, telegramFake)
@@ -324,6 +339,46 @@ func TestBulkRemovalWithDataDeletesOnlyWhatNothingElseUses(t *testing.T) {
 	} {
 		if !strings.Contains(outcome, want) {
 			t.Errorf("outcome lacks %q:\n%s", want, outcome)
+		}
+	}
+}
+
+// Torrents that share a folder each delete their own files; the folder goes
+// once it is empty, and only files none of them listed stay, reported once
+// every torrent's files are gone. A torrent inside another's folder goes
+// first, so the outer one's folder can go too.
+func TestBulkRemovalWithDataSharesFoldersFairly(t *testing.T) {
+	root := t.TempDir()
+	in := func(names ...string) string { return filepath.Join(append([]string{root}, names...)...) }
+	torrents := rtapi.Torrents{
+		dataTorrent(t, "x-a", "A", in("shared"), false),
+		dataTorrent(t, "x-b", "B", in("shared"), false),
+		dataTorrent(t, "x-outer", "C", in("outer"), false),
+		dataTorrent(t, "x-inner", "D", in("outer", "inner"), false),
+		dataTorrent(t, "x-mixed", "E", in("mixed"), false),
+		// Cross-seeds of one release list the same files.
+		dataTorrent(t, "x-same", "F", in("same"), false),
+		dataTorrent(t, "x-same", "1", in("same"), false),
+	}
+	if err := os.WriteFile(in("mixed", "mine.txt"), []byte("not a torrent's"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app, telegramFake, rtorrentFake := buttonApp(t, torrents)
+	app.dataRoot = root
+	rtorrentFake.set(func(f *fakeRtorrent) { f.files = dataFiles(torrents) })
+	command(app, "search x-")
+	list := nextSent(t, telegramFake)
+	press(app, master, list.messageID, "bk:deldata")
+	press(app, master, list.messageID, "bc")
+	app.wg.Wait()
+	outcome := lastEdit(t, telegramFake).text
+	if !strings.HasPrefix(outcome, "Removed 7 torrents and deleted their data, 7.0 MiB.") ||
+		!strings.HasSuffix(outcome, "\n\nFiles that were not the torrents' own stayed:\n• x-mixed: 1 file that is not part of it stays in "+in("mixed")) {
+		t.Fatalf("outcome = %q", outcome)
+	}
+	for path, want := range map[string]bool{in("shared"): false, in("outer"): false, in("same"): false, in("mixed", "x-mixed.bin"): false, in("mixed", "mine.txt"): true} {
+		if exists(t, path) != want {
+			t.Errorf("%s exists = %v, want %v", path, !want, want)
 		}
 	}
 }

@@ -942,6 +942,91 @@ func TestDeldataChecksAgainAfterRemoving(t *testing.T) {
 	}
 }
 
+// A torrent added without a folder of its own keeps its data in a folder it
+// shares with other files. deldata deletes the files rTorrent lists for the
+// torrent, and the folders that leaves empty, and nothing else.
+func TestDeldataDeletesOnlyTheTorrentsFiles(t *testing.T) {
+	root := t.TempDir()
+	movies := filepath.Join(root, "movies")
+	for _, file := range []string{"film.mkv", filepath.Join("subs", "film.srt"), "other.mkv", filepath.Join("old", "notes.txt")} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(movies, file)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(movies, file), []byte(file), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := strings.Repeat("A", 40)
+	app, telegramFake, rtorrentFake := buttonApp(t, rtapi.Torrents{
+		{Name: "film", Hash: hash, State: rtapi.Seeding, Path: movies, Directory: movies, MultiFile: true},
+	})
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.files = map[string][]rtapi.File{hash: {{Path: "film.mkv"}, {Path: "subs/film.srt"}, {Path: "never/downloaded.nfo"}}}
+	})
+	app.dataRoot = root
+	command(app, "deldata "+hash+" confirm")
+	if reply := nextSent(t, telegramFake).text; reply != "Deleted with data: film\n2 files that are not part of it stay in "+movies+"." {
+		t.Fatalf("reply = %q", reply)
+	}
+	for file, want := range map[string]bool{"film.mkv": false, "subs": false, "other.mkv": true, filepath.Join("old", "notes.txt"): true} {
+		if exists(t, filepath.Join(movies, file)) != want {
+			t.Errorf("%s exists = %v, want %v", file, !want, want)
+		}
+	}
+
+	// With nothing else in it, the folder goes too, with empty folders the
+	// torrent did not list.
+	for _, file := range []string{"other.mkv", filepath.Join("old", "notes.txt")} {
+		os.Remove(filepath.Join(movies, file))
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.torrents = rtapi.Torrents{{Name: "film", Hash: hash, State: rtapi.Seeding, Path: movies, Directory: movies, MultiFile: true}}
+	})
+	command(app, "deldata "+hash+" confirm")
+	if reply := nextSent(t, telegramFake).text; reply != "Deleted with data: film" || exists(t, movies) {
+		t.Fatalf("reply = %q, folder exists = %v", reply, exists(t, movies))
+	}
+}
+
+// A file rTorrent lists outside the torrent's folder stops the deletion
+// before anything is deleted, and a torrent whose files cannot be listed
+// stays loaded.
+func TestDeldataRefusesFilesOutsideTheFolder(t *testing.T) {
+	root := t.TempDir()
+	show := filepath.Join(root, "show")
+	for _, file := range []string{filepath.Join(show, "a.mkv"), filepath.Join(root, "outside.mkv")} {
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(file), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := strings.Repeat("A", 40)
+	torrent := func() rtapi.Torrents {
+		return rtapi.Torrents{{Name: "show", Hash: hash, State: rtapi.Seeding, Path: show, Directory: show, MultiFile: true}}
+	}
+	app, telegramFake, rtorrentFake := buttonApp(t, torrent())
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.files = map[string][]rtapi.File{hash: {{Path: "a.mkv"}, {Path: "../outside.mkv"}}}
+	})
+	app.dataRoot = root
+	command(app, "deldata "+hash+" confirm")
+	if reply := nextSent(t, telegramFake).text; !strings.HasPrefix(reply, `Removed show from rTorrent, but kept its data: deleting it failed: rTorrent lists the file "../outside.mkv"`) ||
+		!exists(t, filepath.Join(show, "a.mkv")) || !exists(t, filepath.Join(root, "outside.mkv")) {
+		t.Fatalf("reply = %q", reply)
+	}
+
+	rtorrentFake.set(func(f *fakeRtorrent) {
+		f.torrents = torrent()
+		f.faults = map[string]bool{"f.multicall": true}
+	})
+	command(app, "deldata "+hash+" confirm")
+	if reply := nextSent(t, telegramFake).text; !strings.HasPrefix(reply, "deldata: its files could not be listed: ") || len(rtorrentFake.called("d.erase")) != 1 {
+		t.Fatalf("reply = %q, %d removals", reply, len(rtorrentFake.called("d.erase")))
+	}
+}
+
 func TestDeldataRefusesUnknownOrSharedData(t *testing.T) {
 	targetHash := strings.Repeat("A", 40)
 	otherHash := strings.Repeat("B", 40)
@@ -955,37 +1040,37 @@ func TestDeldataRefusesUnknownOrSharedData(t *testing.T) {
 	}{
 		{"opened torrent nested in the data", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
-				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "show", Hash: targetHash, Path: show, MultiFile: true},
 				{Name: "extra", Hash: otherHash, Path: filepath.Join(show, "extra")},
 			}
 		}, "deldata: its data overlaps that of extra, which stays", false},
 		{"unopened multi-file cross-seed", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
-				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "show", Hash: targetHash, Path: show, MultiFile: true},
 				{Name: "show", Hash: otherHash, Directory: show, MultiFile: true},
 			}
 		}, "deldata: its data overlaps that of show, which stays", false},
 		{"unopened single-file inside the data", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
-				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "show", Hash: targetHash, Path: show, MultiFile: true},
 				{Name: "episode.mkv", Hash: otherHash, Directory: show},
 			}
 		}, "deldata: its data overlaps that of episode.mkv, which stays", false},
 		{"unopened single-file beside the data", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
-				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "show", Hash: targetHash, Path: show, MultiFile: true},
 				{Name: "movie.mkv", Hash: otherHash, Directory: root},
 			}
 		}, "Deleted with data: show", true},
 		{"other location unknown", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
-				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "show", Hash: targetHash, Path: show, MultiFile: true},
 				{Name: "lost", Hash: otherHash},
 			}
 		}, "deldata: rTorrent did not report where lost", false},
 		{"single-file name rewritten by libtorrent", func(root, show string) rtapi.Torrents {
 			return rtapi.Torrents{
-				{Name: "show", Hash: targetHash, Path: show},
+				{Name: "show", Hash: targetHash, Path: show, MultiFile: true},
 				{Name: "a/b", Hash: otherHash, Directory: root},
 			}
 		}, "deldata: rTorrent did not report where a/b", false},
@@ -1000,12 +1085,13 @@ func TestDeldataRefusesUnknownOrSharedData(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(show, "extra"), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			for _, file := range []string{filepath.Join(show, "episode.mkv"), filepath.Join(root, "movie.mkv")} {
+			for _, file := range []string{filepath.Join(show, "episode.mkv"), filepath.Join(show, "extra", "bonus.mkv"), filepath.Join(root, "movie.mkv")} {
 				if err := os.WriteFile(file, []byte(file), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			rtorrentFake, client := newFakeRtorrent(t, test.torrents(root, show)...)
+			rtorrentFake.files = map[string][]rtapi.File{targetHash: {{Path: "episode.mkv"}, {Path: "extra/bonus.mkv"}}}
 			telegramFake := &fakeTelegram{sent: make(chan sentMessage, 4)}
 			app := &application{
 				bot:      newTestBot(t, telegramFake, "123:SECRET"),

@@ -312,6 +312,9 @@ func (a *application) deleteWithData(ctx context.Context, chatID int64, referenc
 	if reason, ok := r.dataKept[target]; ok {
 		return fmt.Sprintf("Removed %s from rTorrent, but kept its data: %s", target.Name, reason), true
 	}
+	if left, ok := r.leftovers[target]; ok {
+		return "Deleted with data: " + target.Name + "\n" + strings.ToUpper(left[:1]) + left[1:] + ".", true
+	}
 	return "Deleted with data: " + target.Name, true
 }
 

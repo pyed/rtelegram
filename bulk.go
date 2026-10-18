@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -339,6 +341,9 @@ type removal struct {
 	// whose data stays, and why.
 	erased   rtapi.Torrents
 	dataKept map[*rtapi.Torrent]string
+	// leftovers are the deleted torrents whose folders held files that were
+	// not theirs, which stay, and what stayed.
+	leftovers map[*rtapi.Torrent]string
 	// unchecked is why the torrents could not be listed after leaving many
 	// were removed, so that no data was deleted.
 	unchecked error
@@ -348,7 +353,7 @@ type removal struct {
 // removeTorrentsWithData removes torrents, named by hash, and deletes their
 // data, as removeWithData describes, and says what it did.
 func (a *application) removeTorrentsWithData(ctx context.Context, hashes []string) removal {
-	r := removal{kept: make(map[*rtapi.Torrent]string), dataKept: make(map[*rtapi.Torrent]string)}
+	r := removal{kept: make(map[*rtapi.Torrent]string)}
 	if a.dataRoot == "" {
 		r.refused = "deleting data is off; set -data-root to the directory on this machine where rTorrent keeps data"
 		return r
@@ -365,10 +370,21 @@ func (a *application) removeTorrentsWithData(ctx context.Context, hashes []strin
 	}
 	r.targets = bulkTargets(all, hashes)
 	going := make(map[*rtapi.Torrent]bool)
+	// rTorrent lists a torrent's files only while it has the torrent, so a
+	// multi-file torrent's are listed before it goes: only they are deleted.
+	files := make(map[*rtapi.Torrent][]rtapi.File)
 	for _, torrent := range r.targets {
 		if err := a.checkDeletable(torrent); err != nil {
 			r.kept[torrent] = err.Error()
 			continue
+		}
+		if torrent.MultiFile {
+			list, err := a.rtorrent.FilesContext(ctx, torrent.Hash)
+			if err != nil {
+				r.kept[torrent] = "its files could not be listed: " + err.Error()
+				continue
+			}
+			files[torrent] = list
 		}
 		going[torrent] = true
 	}
@@ -407,7 +423,7 @@ func (a *application) removeTorrentsWithData(ctx context.Context, hashes []strin
 		r.unchecked, r.leaving = err, len(leaving)
 		return r
 	}
-	r.erased, r.dataKept = a.deleteErasedData(leaving, paths, fresh)
+	r.erased, r.dataKept, r.leftovers = a.deleteErasedData(leaving, paths, fresh, files)
 	for _, torrent := range leaving {
 		if slices.Contains(r.erased, torrent) {
 			continue
@@ -452,6 +468,9 @@ func (r removal) report() string {
 	case len(r.erased) == 0:
 		report.WriteString("Nothing was removed.")
 	}
+	if len(r.leftovers) > 0 {
+		fmt.Fprintf(&report, "\n\nFiles that were not the torrents' own stayed:%s", reasons(deleted, r.leftovers))
+	}
 	if len(r.dataKept) > 0 {
 		fmt.Fprintf(&report, "\n\nRemoved %s from rTorrent, but kept their data:%s", plural(len(r.dataKept), "torrent"), reasons(r.erased, r.dataKept))
 	}
@@ -470,17 +489,24 @@ func keptReport(targets rtapi.Torrents, kept map[*rtapi.Torrent]string) string {
 // deleteErasedData deletes the data of those of leaving that are not in
 // fresh, the torrents rTorrent has once it erased leaving, and returns them,
 // with why it kept the data of any: data that a torrent still loaded
-// overlaps is kept.
-func (a *application) deleteErasedData(leaving rtapi.Torrents, paths map[*rtapi.Torrent]string, fresh rtapi.Torrents) (rtapi.Torrents, map[*rtapi.Torrent]string) {
-	dataKept := make(map[*rtapi.Torrent]string)
+// overlaps is kept. files are the multi-file torrents' files, as rTorrent
+// listed them before they went. It also returns, for torrents whose folders
+// held files that were not theirs, which stayed, what stayed.
+func (a *application) deleteErasedData(leaving rtapi.Torrents, paths map[*rtapi.Torrent]string, fresh rtapi.Torrents,
+	files map[*rtapi.Torrent][]rtapi.File) (erased rtapi.Torrents, dataKept, leftovers map[*rtapi.Torrent]string) {
+	dataKept, leftovers = make(map[*rtapi.Torrent]string), make(map[*rtapi.Torrent]string)
 	loaded := make(map[string]bool, len(fresh))
 	for _, torrent := range fresh {
 		loaded[strings.ToUpper(torrent.Hash)] = true
 	}
-	erased := filterTorrents(leaving, func(torrent *rtapi.Torrent) bool { return !loaded[strings.ToUpper(torrent.Hash)] })
+	erased = filterTorrents(leaving, func(torrent *rtapi.Torrent) bool { return !loaded[strings.ToUpper(torrent.Hash)] })
 	freshPaths, unknown := canonicalPaths(fresh)
-	var removed []string
-	for _, torrent := range erased {
+	// Data inside other data goes first, so that a folder holding another
+	// torrent's folder is empty of it by the time the folder's own turn comes.
+	order := slices.Clone(erased)
+	slices.SortStableFunc(order, func(x, y *rtapi.Torrent) int { return cmp.Compare(pathDepth(paths[y]), pathDepth(paths[x])) })
+	var removed rtapi.Torrents
+	for _, torrent := range order {
 		path := paths[torrent]
 		if unknown != nil {
 			dataKept[torrent] = "rTorrent did not report where " + unknown.Name + " keeps its data, so it may share it"
@@ -490,25 +516,116 @@ func (a *application) deleteErasedData(leaving rtapi.Torrents, paths map[*rtapi.
 			dataKept[torrent] = "its data overlaps that of " + fresh[user].Name + ", which is loaded"
 			continue
 		}
-		// Data inside data already deleted is gone too.
-		if slices.ContainsFunc(removed, func(parent string) bool { return containsPath(parent, path) }) {
-			continue
-		}
 		root, relative, err := validateTorrentData(a.dataRoot, dataPath(torrent))
+		if errors.Is(err, fs.ErrNotExist) && slices.ContainsFunc(removed, func(other *rtapi.Torrent) bool { return containsPath(paths[other], path) }) {
+			continue // it went with data deleted before, such as a cross-seed's
+		}
 		if err != nil {
 			dataKept[torrent] = err.Error()
 			continue
 		}
-		err = root.RemoveAll(relative)
+		err = deleteData(root, relative, torrent.MultiFile, files[torrent])
 		root.Close()
 		if err != nil {
 			a.logger.Printf("[ERROR] deleting the data of %s: %s", torrent.Name, err)
 			dataKept[torrent] = "deleting it failed: " + err.Error()
 			continue
 		}
-		removed = append(removed, path)
+		removed = append(removed, torrent)
 	}
-	return erased, dataKept
+	// Once every torrent's files are gone, what is left in their folders was
+	// none of theirs.
+	for _, torrent := range removed {
+		if count := a.filesLeft(dataPath(torrent)); count > 0 {
+			leftovers[torrent] = fmt.Sprintf("%s that %s not part of it %s in %s", plural(count, "file"),
+				map[bool]string{true: "is", false: "are"}[count == 1], map[bool]string{true: "stays", false: "stay"}[count == 1], dataPath(torrent))
+		}
+	}
+	return erased, dataKept, leftovers
+}
+
+// deleteData deletes a torrent's data at relative, inside root: the file of a
+// single-file torrent, or the files a multi-file torrent lists, and then the
+// folders they leave empty, the torrent's own included. Anything else in its
+// folder stays, with the folder: the folder may be one the torrent shares,
+// as when it was added without a folder of its own.
+func deleteData(root *os.Root, relative string, multiFile bool, files []rtapi.File) error {
+	if !multiFile {
+		return root.Remove(relative)
+	}
+	names := make([]string, len(files))
+	for i, file := range files {
+		names[i] = filepath.FromSlash(file.Path)
+		if !filepath.IsLocal(names[i]) {
+			return fmt.Errorf("rTorrent lists the file %q, which is not inside the torrent's folder", file.Path)
+		}
+	}
+	data, err := root.OpenRoot(relative)
+	if err != nil {
+		return err
+	}
+	folders := make(map[string]bool)
+	for _, name := range names {
+		if err := data.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			data.Close()
+			return err
+		}
+		for folder := filepath.Dir(name); folder != "."; folder = filepath.Dir(folder) {
+			folders[folder] = true
+		}
+	}
+	// Folders go deepest first; one that holds anything else stays.
+	for _, folder := range slices.SortedFunc(maps.Keys(folders), func(x, y string) int {
+		return cmp.Or(cmp.Compare(pathDepth(y), pathDepth(x)), cmp.Compare(x, y))
+	}) {
+		data.Remove(folder)
+	}
+	left, err := countFiles(data)
+	data.Close() // Windows deletes no folder that is open
+	if err != nil || left > 0 {
+		return err
+	}
+	// Only empty folders are left, if any.
+	return root.RemoveAll(relative)
+}
+
+// countFiles counts what a folder holds besides folders: files, and
+// symbolic links, which it does not follow.
+func countFiles(folder *os.Root) (int, error) {
+	count := 0
+	err := fs.WalkDir(folder.FS(), ".", func(_ string, entry fs.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
+			count++
+		}
+		return err
+	})
+	return count, err
+}
+
+// filesLeft counts the files left at path, a torrent's data inside the data
+// root: none when it is gone or is a file, which deleting removed.
+func (a *application) filesLeft(path string) int {
+	relative, err := containedRelative(a.dataRoot, path)
+	if err != nil {
+		return 0
+	}
+	root, err := os.OpenRoot(a.dataRoot)
+	if err != nil {
+		return 0
+	}
+	defer root.Close()
+	folder, err := root.OpenRoot(relative)
+	if err != nil {
+		return 0
+	}
+	defer folder.Close()
+	count, _ := countFiles(folder)
+	return count
+}
+
+// pathDepth is how many folders deep path is.
+func pathDepth(path string) int {
+	return strings.Count(filepath.Clean(path), string(filepath.Separator))
 }
 
 // reasons lists, in the order of torrents, each torrent in why with the

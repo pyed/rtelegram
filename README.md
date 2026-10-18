@@ -323,6 +323,13 @@ the torrents from rTorrent first, checks which are gone, and only then deletes
 their data, one action at a time. The outcome lists what was removed, and what
 was kept and why.
 
+Only a torrent's own files are deleted: the file of a single-file torrent, or
+the files rTorrent lists for a multi-file torrent, and then the folders that
+leaves empty, the torrent's folder included. A torrent added without a folder
+of its own (ruTorrent's "Don't add torrent's name to path") keeps its files in
+a folder it shares; anything else there stays, and the outcome says how many
+files stayed. A torrent whose files rTorrent cannot list stays loaded.
+
 ## Unregistered torrents
 
 When a private tracker deletes a torrent, or replaces it with a better
@@ -488,10 +495,10 @@ It works only beneath `-data-root`, rejects roots, parents, symlink targets,
 and paths that overlap another loaded torrent, and refuses whenever rTorrent
 has not reported where another torrent keeps its data. rTorrent reports `d.base_path`
 only for torrents it has opened, so unopened torrents are located through
-`d.directory`. It then requires an acknowledged metadata deletion and removes
-the contained local path. If local removal fails after metadata erasure, the bot
-reports that partial outcome explicitly. To remove many torrents with their
-data at once, see [Acting on whole lists](#acting-on-whole-lists).
+`d.directory`. It removes the torrent from rTorrent, checks the list again,
+and only then deletes the torrent's own files, as removing a whole list does
+(see [Acting on whole lists](#acting-on-whole-lists)), and says what it kept
+and why.
 
 ## Upgrading to v3
 
