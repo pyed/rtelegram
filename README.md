@@ -87,6 +87,12 @@ socket. Running `-install` again replaces the service with the new settings.
 service and removes it; the settings and state files are kept. On other
 systems, have the init system run `rtelegram -config FILE`.
 
+A systemd service may not gain privileges, and a system one may not change
+the system's files or kernel settings; torrent data stays reachable wherever
+it is. A service installed as root without `sudo` from your account runs as
+root, and the Windows service runs as LocalSystem; `-install` says so, and
+how to run it as your account instead.
+
 ## Configure
 
 `RT_MASTERS` is a comma-separated list of the numeric user IDs of the Telegram

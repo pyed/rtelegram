@@ -201,9 +201,9 @@ func installService(ctx context.Context, cfg config, h serviceHost) error {
 
 	switch h.goos {
 	case "linux":
-		return h.installSystemd(configPath)
+		err = h.installSystemd(configPath)
 	case "darwin":
-		return h.installLaunchd(configPath)
+		err = h.installLaunchd(configPath)
 	default:
 		if err := h.installWindows(h.executable, []string{"-config", configPath}); err != nil {
 			return err
@@ -212,8 +212,15 @@ func installService(ctx context.Context, cfg config, h serviceHost) error {
 		h.printf("Logs: %s", filepath.Join(filepath.Dir(configPath), "rtelegram.log"))
 		h.printf("After editing %s, restart it with: Restart-Service %s", configPath, serviceName)
 		h.printf("Remove it with: rtelegram -uninstall")
+		h.printf("Note: it runs as LocalSystem, which may read and delete any file. To run it as your own account, " +
+			"set it under Log On in the service's properties (services.msc), and restart it.")
 		return nil
 	}
+	if err == nil && h.admin && (h.account.name == "" || h.account.name == "root") {
+		h.printf("Note: it runs as root, which may read and delete any file. To run it as your own account, " +
+			"run sudo rtelegram -install from that account.")
+	}
+	return err
 }
 
 // uninstallService stops the service and removes it, keeping the settings.
@@ -254,6 +261,15 @@ func systemdUnit(exe, configPath string, system bool, account string) string {
 	fmt.Fprintf(&unit, "\n[Service]\nExecStart=%s -config %s\nRestart=on-failure\nRestartSec=15\n", systemdArg(exe), systemdArg(configPath))
 	if system && account != "" && account != "root" {
 		fmt.Fprintf(&unit, "User=%s\n", account)
+	}
+	// The bot reads, sends, and deletes torrent data, and needs nothing more:
+	// it may not gain privileges, and a system service may not change the
+	// system's files, kernel, or control groups. Data and sockets stay
+	// reachable wherever they are, /tmp included. A user's service manager
+	// cannot sandbox further without privileges.
+	unit.WriteString("NoNewPrivileges=yes\n")
+	if system {
+		unit.WriteString("ProtectSystem=full\nProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectControlGroups=yes\nRestrictSUIDSGID=yes\n")
 	}
 	target := "default.target"
 	if system {

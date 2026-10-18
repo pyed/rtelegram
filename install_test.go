@@ -160,8 +160,9 @@ func TestInstallSystemdUserService(t *testing.T) {
 			t.Errorf("unit lacks %q:\n%s", want, unit)
 		}
 	}
-	if strings.Contains(unit, "User=") || strings.Contains(unit, "network-online") {
-		t.Errorf("a user unit names a user or a system target:\n%s", unit)
+	if strings.Contains(unit, "User=") || strings.Contains(unit, "network-online") || strings.Contains(unit, "ProtectSystem") ||
+		!strings.Contains(unit, "NoNewPrivileges=yes\n") {
+		t.Errorf("a user unit names a user or a system target, or sandboxes wrongly:\n%s", unit)
 	}
 	if got := strings.Join(ti.commands, "; "); got != "systemctl --user daemon-reload; systemctl --user enable rtelegram.service; "+
 		"systemctl --user restart rtelegram.service; loginctl enable-linger alice" {
@@ -213,10 +214,20 @@ func TestInstallSystemdSystemService(t *testing.T) {
 	}
 	unitPath := filepath.Join(ti.host.prefix, "etc", "systemd", "system", "rtelegram.service")
 	unit := readFile(t, unitPath)
-	for _, want := range []string{"User=alice\n", "After=network-online.target", "WantedBy=multi-user.target"} {
+	for _, want := range []string{"User=alice\n", "After=network-online.target", "WantedBy=multi-user.target",
+		"NoNewPrivileges=yes\n", "ProtectSystem=full\n", "RestrictSUIDSGID=yes\n"} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("system unit lacks %q:\n%s", want, unit)
 		}
+	}
+	// Data, and sockets, in /tmp or home directories stay reachable.
+	for _, unwanted := range []string{"PrivateTmp", "ProtectHome", "ProtectSystem=strict"} {
+		if strings.Contains(unit, unwanted) {
+			t.Errorf("system unit has %s:\n%s", unwanted, unit)
+		}
+	}
+	if strings.Contains(ti.out.String(), "runs as root") {
+		t.Errorf("warned of root for alice's service: %s", ti.out.String())
 	}
 	if got := strings.Join(ti.commands, "; "); got != "systemctl daemon-reload; systemctl enable rtelegram.service; systemctl restart rtelegram.service" {
 		t.Fatalf("commands = %s", got)
@@ -232,6 +243,21 @@ func TestInstallSystemdSystemService(t *testing.T) {
 	}
 	if _, err := os.Stat(unitPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unit still exists: %v", err)
+	}
+}
+
+// A system service installed as root, not through sudo from an account,
+// runs as root, and -install says so.
+func TestInstallAsRootSaysSo(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin"} {
+		ti := newTestInstall(t, goos, true)
+		ti.host.account.name = "root"
+		if err := installService(context.Background(), installConfig(t), ti.host); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(ti.out.String(), "Note: it runs as root") {
+			t.Errorf("%s output = %s", goos, ti.out.String())
+		}
 	}
 }
 
