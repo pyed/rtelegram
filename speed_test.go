@@ -282,6 +282,40 @@ func TestQuietLimitsReturnAfterRTorrentRestarts(t *testing.T) {
 	}
 }
 
+// In a container, a restarted rTorrent may get the process ID it had; its
+// session totals, which only grow while it runs, are lower than they were.
+func TestQuietLimitsReturnAfterRTorrentRestartsWithItsOldID(t *testing.T) {
+	clock := at(22, 30)
+	app, telegramFake, rtorrentFake := quietApp(t, &clock)
+	ctx := context.Background()
+	lastSentText(t, telegramFake, app, "quiet 23:00-07:00 down 2M")
+	app.checkQuiet(ctx, at(23, 0))
+	// Restarted before the next look.
+	rtorrentFake.set(func(f *fakeRtorrent) { f.limits, f.totals = [2]uint64{0, 0}, [2]uint64{1 << 30, 1 << 30} })
+	app.checkQuiet(ctx, at(23, 1))
+	if limitsOf(rtorrentFake)[0] != 2<<20 {
+		t.Fatalf("limits after a restart just after quiet hours began = %v", limitsOf(rtorrentFake))
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.totals = [2]uint64{9 << 30, 9 << 30} })
+	app.checkQuiet(ctx, at(23, 30))
+	if limitsOf(rtorrentFake)[0] != 2<<20 {
+		t.Fatalf("limits while rTorrent runs = %v", limitsOf(rtorrentFake))
+	}
+
+	// Restarted, with totals below those of the last look: either total
+	// going down tells.
+	rtorrentFake.set(func(f *fakeRtorrent) { f.limits, f.totals = [2]uint64{0, 0}, [2]uint64{10 << 30, 6 << 30} })
+	app.checkQuiet(ctx, at(1, 0))
+	if limitsOf(rtorrentFake) != [2]uint64{2 << 20, 0} {
+		t.Fatalf("limits after rTorrent restarted with its old ID = %v", limitsOf(rtorrentFake))
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.limits[0], f.totals[1] = 7<<20, 7<<30 })
+	app.checkQuiet(ctx, at(1, 1))
+	if limitsOf(rtorrentFake)[0] != 7<<20 {
+		t.Fatalf("applied again without a restart: %v", limitsOf(rtorrentFake))
+	}
+}
+
 // Quiet hours applied by a version that did not note rTorrent's process are
 // taken to hold, rather than applied again.
 func TestQuietHoursFromBeforeTheProcessWasNoted(t *testing.T) {

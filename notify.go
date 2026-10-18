@@ -74,12 +74,28 @@ type watcher struct {
 	lastError string
 	// notices hold back new errors like ones announced lately.
 	notices map[errorKey]*errorNotice
-	// pid is rTorrent's process ID at the last look, 0 before the first;
-	// downSince is when rTorrent stopped answering, and downTold whether
-	// chats were told.
+	// pid and totals are rTorrent's process ID and session totals at the
+	// last look, 0 before the first; downSince is when rTorrent stopped
+	// answering, and downTold whether chats were told.
 	pid       int
+	totals    [2]uint64
 	downSince time.Time
 	downTold  bool
+}
+
+// sessionTotals are what rTorrent has uploaded and downloaded since it
+// started, which only grow while it runs.
+func sessionTotals(stats *rtapi.Stats) [2]uint64 {
+	return [2]uint64{stats.TotalUp, stats.TotalDown}
+}
+
+// sameRun reports whether stats come from the run of rTorrent that had pid
+// and, later, totals: a restart changes the process ID, and starts the
+// session totals from zero, which in a container, where a restarted rTorrent
+// can get the ID it had, is all that tells.
+func sameRun(pid int, totals [2]uint64, stats *rtapi.Stats) bool {
+	now := sessionTotals(stats)
+	return stats.PID == pid && now[0] >= totals[0] && now[1] >= totals[1]
 }
 
 // errorKey is what errors are grouped by: the tracker, and its message.
@@ -177,7 +193,7 @@ func (a *application) healthEvents(ctx context.Context, w *watcher, now time.Tim
 		a.logger.Printf("[ERROR] rTorrent is not answering: %s", err)
 		return []event{{kind: eventRtorrent, text: "🔴 rTorrent is not answering: " + err.Error()}}, false
 	}
-	restarted := w.pid != 0 && stats.PID != w.pid
+	restarted := w.pid != 0 && !sameRun(w.pid, w.totals, stats)
 	var events []event
 	switch {
 	case w.downTold:
@@ -190,7 +206,7 @@ func (a *application) healthEvents(ctx context.Context, w *watcher, now time.Tim
 	case restarted:
 		events = append(events, event{kind: eventRtorrent, text: "🔄 rTorrent restarted."})
 	}
-	w.pid, w.downSince, w.downTold = stats.PID, time.Time{}, false
+	w.pid, w.totals, w.downSince, w.downTold = stats.PID, sessionTotals(stats), time.Time{}, false
 	return events, true
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-telegram/bot/models"
+	"github.com/pyed/rtapi"
 )
 
 // quietHours lowers the global rate limits between two times of day.
@@ -19,9 +20,22 @@ type quietHours struct {
 	Up    *uint64 `json:"up,omitempty"`
 	// Saved holds the limits from before quiet hours began, while they last.
 	Saved *[2]uint64 `json:"saved,omitempty"`
-	// PID is rTorrent's process ID when the quiet limits were applied. A
-	// restart of rTorrent, which changes it, puts back rtorrent.rc's limits.
-	PID int `json:"pid,omitempty"`
+	// PID is rTorrent's process ID when the quiet limits were applied, and
+	// Totals its session totals at the last look (nil from versions before
+	// 3.2.0). A restart of rTorrent, which changes the one or lowers the
+	// other, puts back rtorrent.rc's limits.
+	PID    int        `json:"pid,omitempty"`
+	Totals *[2]uint64 `json:"totals,omitempty"`
+}
+
+// sameRun reports whether stats come from the run of rTorrent the quiet
+// limits were applied to.
+func (q quietHours) sameRun(stats *rtapi.Stats) bool {
+	var totals [2]uint64
+	if q.Totals != nil {
+		totals = *q.Totals
+	}
+	return sameRun(q.PID, totals, stats)
 }
 
 var (
@@ -353,13 +367,21 @@ func (a *application) checkQuietLocked(ctx context.Context, now time.Time) {
 			return
 		}
 		a.quietError = ""
+		totals := sessionTotals(stats)
 		if quiet.Saved != nil {
-			switch quiet.PID {
-			case stats.PID:
-				return // the quiet limits hold
-			case 0:
+			switch {
+			case quiet.PID == 0:
 				// Applied by a version that did not note rTorrent's process.
-				setQuiet(func(q *quietHours) { q.PID = stats.PID })
+				setQuiet(func(q *quietHours) { q.PID, q.Totals = stats.PID, &totals })
+				return
+			case quiet.sameRun(stats):
+				// The quiet limits hold. The totals move on in memory, and are
+				// saved with the next change.
+				a.state.change(func(data *stateData) {
+					if data.Quiet != nil {
+						data.Quiet.Totals = &totals
+					}
+				})
 				return
 			}
 		}
@@ -379,19 +401,19 @@ func (a *application) checkQuietLocked(ctx context.Context, now time.Time) {
 		if !restarted {
 			// Remember the limits before changing them, so that they come
 			// back even if the bot restarts during quiet hours.
-			setQuiet(func(q *quietHours) { q.Saved, q.PID = &[2]uint64{down, up}, stats.PID })
+			setQuiet(func(q *quietHours) { q.Saved, q.PID, q.Totals = &[2]uint64{down, up}, stats.PID, &totals })
 		}
 		if err := a.rtorrent.SetGlobalLimitsContext(ctx, quietDown, quietUp); err != nil {
 			failed(err)
 			if !restarted {
 				// Forget them again, so the next check tries once more.
-				setQuiet(func(q *quietHours) { q.Saved, q.PID = nil, 0 })
+				setQuiet(func(q *quietHours) { q.Saved, q.PID, q.Totals = nil, 0, nil })
 			}
 			return
 		}
 		if restarted {
 			a.logger.Printf("[INFO] rTorrent restarted during quiet hours, so the quiet limits are applied again")
-			setQuiet(func(q *quietHours) { q.PID = stats.PID })
+			setQuiet(func(q *quietHours) { q.PID, q.Totals = stats.PID, &totals })
 		}
 	case quiet.Saved != nil:
 		if err := a.rtorrent.SetGlobalLimitsContext(ctx, quiet.Saved[0], quiet.Saved[1]); err != nil {
@@ -399,6 +421,6 @@ func (a *application) checkQuietLocked(ctx context.Context, now time.Time) {
 			return
 		}
 		a.quietError = ""
-		setQuiet(func(q *quietHours) { q.Saved, q.PID = nil, 0 })
+		setQuiet(func(q *quietHours) { q.Saved, q.PID, q.Totals = nil, 0, nil })
 	}
 }

@@ -692,6 +692,16 @@ func TestRTorrentOutagesAndRestartsAreAnnounced(t *testing.T) {
 	if sent := at(450); len(sent) != 1 || sent[0] != "🔄 rTorrent restarted." {
 		t.Fatalf("a restart between checks = %q", sent)
 	}
+	// In a container, a restarted rTorrent may get the process ID it had;
+	// its session totals start again from zero.
+	rtorrentFake.set(func(f *fakeRtorrent) { f.totals = [2]uint64{1 << 20, 5 << 30} })
+	if sent := at(465); len(sent) != 1 || sent[0] != "🔄 rTorrent restarted." {
+		t.Fatalf("a restart with the same process ID = %q", sent)
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.totals = [2]uint64{2 << 20, 5<<30 + 1} })
+	if sent := at(470); len(sent) != 0 {
+		t.Fatalf("growing totals = %q", sent)
+	}
 
 	// Back without having restarted.
 	answering(false)

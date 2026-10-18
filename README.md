@@ -429,7 +429,9 @@ about. Each is a button to turn on or off:
   `-low-disk`. The bot warns again only after space recovers.
 - **rTorrent down or restarted**: when rTorrent has not answered for a minute,
   when it answers again and after how long, and when it restarted, which the
-  bot tells from its process ID, even between two checks. The bot starts
+  bot tells from its process ID, or, in a container where a restarted
+  rTorrent can get the ID it had, from its session totals starting over,
+  even between two checks. The bot starts
   while rTorrent is down, as after a reboot that starts rTorrent later, so it
   can say so.
 
