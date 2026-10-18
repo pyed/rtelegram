@@ -406,7 +406,9 @@ func (a *application) checkWatches(ctx context.Context) {
 			continue
 		}
 		var fresh []searchResult
+		listed := make(map[string]bool, len(results))
 		for _, result := range results {
+			listed[result.key()] = true
 			if !slices.Contains(rule.Seen, result.key()) && len(fresh) < maxWatchAddsPerCheck {
 				fresh = append(fresh, result)
 			}
@@ -421,8 +423,7 @@ func (a *application) checkWatches(ctx context.Context) {
 		a.state.update(func(data *stateData) {
 			for i := range data.Watch {
 				if data.Watch[i].Name == rule.Name {
-					seen := append(data.Watch[i].Seen, added...)
-					data.Watch[i].Seen = seen[max(0, len(seen)-maxWatchSeen):]
+					data.Watch[i].Seen = keepSeen(append(data.Watch[i].Seen, added...), listed)
 				}
 			}
 		})
@@ -434,6 +435,25 @@ func (a *application) checkWatches(ctx context.Context) {
 			a.grab(ruleCtx, rule.ChatID, "watch "+rule.Name, result, rtapi.DotTorrentWithOptions{Dir: rule.Dir, Label: encodeLabel(rule.Label)})
 		}
 	}
+}
+
+// keepSeen trims a rule's seen keys, oldest first, to maxWatchSeen, but keeps
+// every key the indexer still lists: dropping one would make its release
+// look new, and add it. A search with more results than that keeps them all.
+func keepSeen(seen []string, listed map[string]bool) []string {
+	extra := len(seen) - maxWatchSeen
+	if extra <= 0 {
+		return seen
+	}
+	kept := make([]string, 0, len(seen))
+	for _, key := range seen {
+		if extra > 0 && !listed[key] {
+			extra--
+			continue
+		}
+		kept = append(kept, key)
+	}
+	return kept
 }
 
 // indexerName names an indexer endpoint in logs without its query string.

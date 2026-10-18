@@ -247,6 +247,45 @@ func TestWatchAddsOnlyNewReleases(t *testing.T) {
 	}
 }
 
+// A search that lists more releases than a rule remembers keeps them all
+// remembered: none comes back as new and is added.
+func TestWatchRemembersEveryListedRelease(t *testing.T) {
+	ix := newFakeIndexer(t)
+	var items []string
+	for i := range maxWatchSeen + 100 {
+		items = append(items, torznabItem(fmt.Sprintf("Old %d", i), magnetFor(fmt.Sprintf("old%d", i)), 1<<30, 9))
+	}
+	ix.setItems("linux", items...)
+	app, telegramFake, rtorrentFake := buttonApp(t, nil)
+	app.indexer = newIndexer(ix.server.URL+"/api", indexerKey)
+	loadByName(rtorrentFake, "new")
+	lastSentText(t, telegramFake, app, "watch add distros linux")
+
+	ix.setItems("linux", append([]string{torznabItem("New", magnetFor("new"), 1<<30, 9)}, items...)...)
+	for range 3 {
+		app.checkWatches(context.Background())
+		app.wg.Wait()
+	}
+	if loads := rtorrentFake.loadCalls(); len(loads) != 1 || !strings.Contains(strings.Join(loads[0], " "), hashOf("new")) {
+		t.Fatalf("loads = %d, want only the new release", len(loads))
+	}
+	app.state.read(func(data *stateData) {
+		if seen := len(data.Watch[0].Seen); seen != maxWatchSeen+101 {
+			t.Errorf("remembers %d releases, want %d", seen, maxWatchSeen+101)
+		}
+	})
+
+	// Releases the indexer no longer lists are forgotten, oldest first.
+	ix.setItems("linux", torznabItem("Newer", magnetFor("newer"), 1<<30, 9))
+	app.checkWatches(context.Background())
+	app.wg.Wait()
+	app.state.read(func(data *stateData) {
+		if seen := data.Watch[0].Seen; len(seen) != maxWatchSeen || seen[len(seen)-1] != hashOf("newer") {
+			t.Errorf("remembers %d releases, the last %q", len(seen), seen[len(seen)-1])
+		}
+	})
+}
+
 func TestWatchListsAndDeletesRules(t *testing.T) {
 	ix := newFakeIndexer(t)
 	app, telegramFake, _ := buttonApp(t, nil)
