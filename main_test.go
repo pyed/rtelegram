@@ -15,12 +15,14 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -326,14 +328,18 @@ type fakeTelegram struct {
 	getFileCalls int
 	sent         chan sentMessage
 	// rateLimited answers that many sendMessage calls with 429 and retryAfter.
-	rateLimited  int
-	retryAfter   int
-	sendAttempts int
-	documents    []sentDocument
-	edits        []sentMessage
-	answers      []callbackAnswer
-	forbidden    map[int64]bool // chats that have blocked the bot
-	commands     string         // the command menu, as JSON
+	rateLimited int
+	retryAfter  int
+	// serverErrors answers that many sendMessage calls with 502, dropped
+	// fails that many with a reset connection, and timeouts that many with
+	// a timeout.
+	serverErrors, dropped, timeouts int
+	sendAttempts                    int
+	documents                       []sentDocument
+	edits                           []sentMessage
+	answers                         []callbackAnswer
+	forbidden                       map[int64]bool // chats that have blocked the bot
+	commands                        string         // the command menu, as JSON
 	// migrated maps groups that have become supergroups to their new IDs.
 	migrated map[int64]int64
 	// goneTopics are forum topics that no longer exist.
@@ -400,6 +406,17 @@ func (f *fakeTelegram) Do(request *http.Request) (*http.Response, error) {
 			f.rateLimited--
 			return response(http.StatusTooManyRequests, fmt.Sprintf(
 				`{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":%d}}`, f.retryAfter)), nil
+		}
+		switch {
+		case f.serverErrors > 0:
+			f.serverErrors--
+			return response(http.StatusBadGateway, `{"ok":false,"error_code":502,"description":"Bad Gateway"}`), nil
+		case f.dropped > 0:
+			f.dropped--
+			return nil, &url.Error{Op: "Post", URL: request.URL.String(), Err: syscall.ECONNRESET}
+		case f.timeouts > 0:
+			f.timeouts--
+			return nil, &url.Error{Op: "Post", URL: request.URL.String(), Err: context.DeadlineExceeded}
 		}
 		chatID, _ := strconv.ParseInt(request.FormValue("chat_id"), 10, 64)
 		threadID, _ := strconv.Atoi(request.FormValue("message_thread_id"))
@@ -571,6 +588,32 @@ func TestSendRetriesRateLimitedMessages(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "rate limit") {
 		t.Fatalf("retries were not logged: %q", logs.String())
+	}
+}
+
+// Failures a moment may cure are tried again, a few times, waiting longer
+// each time; a timeout is not, since Telegram may have sent the message.
+func TestSendRetriesFailuresAMomentMayCure(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fake     *fakeTelegram
+		attempts int
+		sent     bool
+	}{
+		{"server errors", &fakeTelegram{serverErrors: 2}, 3, true},
+		{"dropped connections", &fakeTelegram{dropped: 1}, 2, true},
+		{"a long outage", &fakeTelegram{serverErrors: maxTelegramAttempts}, maxTelegramAttempts, false},
+		{"a timeout", &fakeTelegram{timeouts: 1}, 1, false},
+	} {
+		var logs bytes.Buffer
+		app := &application{bot: newTestBot(t, test.fake, "123:SECRET"), logger: log.New(&logs, "", 0), token: "123:SECRET", retryDelay: time.Millisecond}
+		_, err := app.send(context.Background(), 111, "Completed: debian.iso")
+		if (err == nil) != test.sent || test.fake.sendAttempts != test.attempts {
+			t.Errorf("%s: err=%v after %d attempts, want %d", test.name, err, test.fake.sendAttempts, test.attempts)
+		}
+		if strings.Contains(logs.String(), "SECRET") {
+			t.Errorf("%s: the log has the token: %q", test.name, logs.String())
+		}
 	}
 }
 

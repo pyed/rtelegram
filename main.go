@@ -119,6 +119,9 @@ type application struct {
 	noLive       bool
 	interval     time.Duration
 	duration     int
+	// retryDelay is the first wait before trying a Telegram request again
+	// after a failure a moment may cure; 0 is a second.
+	retryDelay time.Duration
 	// addTimeout bounds how long an add waits for rTorrent to load the torrent.
 	addTimeout      time.Duration
 	addPollInterval time.Duration

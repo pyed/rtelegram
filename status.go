@@ -63,7 +63,7 @@ func (a *application) status(ctx context.Context, chatID int64, arguments []stri
 	}); err != nil {
 		a.logger.Printf("[ERROR] saving the status message: %s", err)
 	}
-	err = a.retryRateLimited(ctx, func() error {
+	err = a.retryTelegram(ctx, func() error {
 		_, err := a.bot.PinChatMessage(ctx, &telegram.PinChatMessageParams{ChatID: key.chatID, MessageID: key.messageID, DisableNotification: true})
 		return err
 	})
@@ -94,7 +94,7 @@ func (a *application) stopStatusLocked(ctx context.Context, chatID int64, note s
 		return false
 	}
 	a.editScreen(ctx, screenKey{chatID, old.Message}, note, nil) // logs its own failure
-	err := a.retryRateLimited(ctx, func() error {
+	err := a.retryTelegram(ctx, func() error {
 		_, err := a.bot.UnpinChatMessage(ctx, &telegram.UnpinChatMessageParams{ChatID: chatID, MessageID: old.Message})
 		return err
 	})
@@ -143,7 +143,7 @@ func (a *application) updateStatus(ctx context.Context, chatID int64, text strin
 		return errNoStatus
 	}
 	key := screenKey{chatID, status.Message}
-	err := a.retryRateLimited(ctx, func() error {
+	err := a.retryTelegram(ctx, func() error {
 		_, err := a.bot.EditMessageText(ctx, &telegram.EditMessageTextParams{
 			ChatID: chatID, MessageID: status.Message, Text: text, ReplyMarkup: statusKeyboard(),
 			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: telegram.True()},

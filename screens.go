@@ -320,7 +320,7 @@ func (a *application) editScreen(ctx context.Context, key screenKey, text string
 	if keyboard != nil {
 		params.ReplyMarkup = keyboard
 	}
-	err := a.retryRateLimited(ctx, func() error {
+	err := a.retryTelegram(ctx, func() error {
 		_, err := a.bot.EditMessageText(ctx, params)
 		return err
 	})

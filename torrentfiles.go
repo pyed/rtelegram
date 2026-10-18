@@ -390,7 +390,7 @@ func (a *application) upload(ctx context.Context, chatID int64, torrent *rtapi.T
 	}
 	defer root.Close()
 	messageThreadID, _ := ctx.Value(messageThreadIDKey{}).(int)
-	err = a.retryRateLimited(ctx, func() error {
+	err = a.retryTelegram(ctx, func() error {
 		content, err := root.Open(relative)
 		if err != nil {
 			return err

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -201,7 +204,7 @@ func (a *application) redactError(err error) error {
 func (a *application) post(ctx context.Context, chatID int64, request func(chatID int64, thread int) error) (int64, error) {
 	thread, _ := ctx.Value(messageThreadIDKey{}).(int)
 	for attempt := 1; ; attempt++ {
-		err := a.retryRateLimited(ctx, func() error { return request(chatID, thread) })
+		err := a.retryTelegram(ctx, func() error { return request(chatID, thread) })
 		if err == nil {
 			return chatID, nil
 		}
@@ -300,24 +303,53 @@ func (a *application) forgetTopic(chatID int64, thread int) {
 	}
 }
 
-// retryRateLimited repeats a Telegram request while Telegram answers 429 Too
-// Many Requests, waiting as long as Telegram asks.
-func (a *application) retryRateLimited(ctx context.Context, request func() error) error {
+// retryTelegram repeats a Telegram request while Telegram answers 429 Too
+// Many Requests, waiting as long as Telegram asks, and a few times, a second
+// apart and then longer, after a failure that a moment may cure
+// (transientFailure).
+func (a *application) retryTelegram(ctx context.Context, request func() error) error {
+	delay := cmp.Or(a.retryDelay, time.Second)
 	for attempt := 1; ; attempt++ {
 		err := request()
+		if err == nil || attempt == maxTelegramAttempts {
+			return err
+		}
+		var wait time.Duration
 		var limited *telegram.TooManyRequestsError
-		if !errors.As(err, &limited) || attempt == maxTelegramAttempts {
+		switch {
+		case errors.As(err, &limited):
+			if wait = time.Duration(limited.RetryAfter) * time.Second; wait > maxRetryAfter {
+				return err
+			}
+			a.logger.Printf("[WARN] Telegram rate limit; retrying in %s", wait)
+		case transientFailure(err):
+			wait = delay << (attempt - 1)
+			a.logger.Printf("[WARN] Telegram: %s; retrying in %s", redact(a.token, err.Error()), wait)
+		default:
 			return err
 		}
-		wait := time.Duration(limited.RetryAfter) * time.Second
-		if wait > maxRetryAfter {
-			return err
-		}
-		a.logger.Printf("[WARN] Telegram rate limit; retrying in %s", wait)
 		if !waitFor(ctx, wait) {
 			return err
 		}
 	}
+}
+
+// telegramServerError matches the library's error for an answer with a 5xx
+// status, which Telegram gives while it is overloaded or restarting.
+var telegramServerError = regexp.MustCompile(`error response from telegram for method \w+, 5\d\d\b`)
+
+// transientFailure reports whether a failed Telegram request is worth trying
+// again soon: Telegram answered with a server error, or with a page that is
+// not its JSON, as a proxy in front of it does, or the connection failed.
+// A timeout is not, since Telegram may have done the request by then.
+func transientFailure(err error) bool {
+	var netErr net.Error
+	if errors.Is(err, context.Canceled) || errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+	var urlErr *url.Error
+	text := err.Error()
+	return telegramServerError.MatchString(text) || strings.Contains(text, "error decode response body") || errors.As(err, &urlErr)
 }
 
 func (a *application) edit(ctx context.Context, chatID int64, messageID int, text string) error {

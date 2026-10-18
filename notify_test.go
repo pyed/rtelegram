@@ -724,6 +724,54 @@ func TestRTorrentOutagesAndRestartsAreAnnounced(t *testing.T) {
 	}
 }
 
+// Notifications that could not be sent, as while Telegram is down, are sent
+// at a later check, in order, unless the chat stopped wanting them or they
+// grew too old.
+func TestUnsentNotificationsAreSentLater(t *testing.T) {
+	app, telegramFake, rtorrentFake := buttonApp(t, handlerTorrents())
+	app.retryDelay = time.Millisecond
+	subscribe(t, app, 111, eventCompleted)
+	ctx, w := context.Background(), &watcher{}
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	at := func(seconds int) []string {
+		app.checkEvents(ctx, w, start.Add(time.Duration(seconds)*time.Second))
+		return drain(telegramFake)
+	}
+	at(0)
+
+	telegramFake.serverErrors = 100
+	rtorrentFake.set(func(f *fakeRtorrent) { f.torrents[1].Finished = 9000 })
+	if sent := at(30); len(sent) != 0 || len(w.pending) != 1 {
+		t.Fatalf("while Telegram fails: sent %q, %d pending", sent, len(w.pending))
+	}
+	rtorrentFake.set(func(f *fakeRtorrent) { f.torrents[2].Finished = 9001 })
+	at(60)
+	telegramFake.serverErrors = 0
+	if sent := at(90); len(sent) != 2 || !strings.HasPrefix(sent[0], "✅ Completed: Ubuntu") || !strings.HasPrefix(sent[1], "✅ Completed: Arch") {
+		t.Fatalf("once Telegram is back = %q", sent)
+	}
+	if sent := at(120); len(sent) != 0 || len(w.pending) != 0 {
+		t.Fatalf("sent twice: %q", sent)
+	}
+
+	// Too old, or for a chat that no longer wants them, they are dropped.
+	telegramFake.serverErrors = 100
+	rtorrentFake.set(func(f *fakeRtorrent) { f.torrents[3].Finished = 9002 })
+	at(150)
+	telegramFake.serverErrors = 0
+	if sent := at(150 + int(maxPendingAge/time.Second) + 30); len(sent) != 0 || len(w.pending) != 0 {
+		t.Fatalf("a day later = %q", sent)
+	}
+	telegramFake.serverErrors = 100
+	rtorrentFake.set(func(f *fakeRtorrent) { f.torrents[4].Finished = 9003 })
+	at(100000)
+	subscribe(t, app, 111, eventErrors)
+	telegramFake.serverErrors = 0
+	if sent := at(100030); len(sent) != 0 || len(w.pending) != 0 {
+		t.Fatalf("after unsubscribing = %q", sent)
+	}
+}
+
 func TestFormatMinutes(t *testing.T) {
 	for d, want := range map[time.Duration]string{
 		0: "0m", 29 * time.Second: "0m", 31 * time.Second: "1m", 59 * time.Minute: "59m",

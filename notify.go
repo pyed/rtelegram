@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	telegram "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/pyed/rtapi"
 )
@@ -41,6 +42,10 @@ const (
 	// downAfter is how long rTorrent must fail to answer before chats are
 	// told, so that a busy moment is not an outage.
 	downAfter = time.Minute
+	// Notifications that could not be sent are tried again at each check,
+	// for up to maxPendingAge, and up to maxPending of them are kept.
+	maxPendingAge = 24 * time.Hour
+	maxPending    = 100
 )
 
 // notifyEvents are the events a chat can subscribe to, as /notify lists them.
@@ -81,6 +86,16 @@ type watcher struct {
 	totals    [2]uint64
 	downSince time.Time
 	downTold  bool
+	// pending are the notifications that could not be sent, oldest first.
+	pending []pendingNotice
+}
+
+// A pendingNotice is a notification that could not be sent to a chat, as
+// while Telegram or the network is down, to try again.
+type pendingNotice struct {
+	chatID int64
+	event  event
+	since  time.Time
 }
 
 // sessionTotals are what rTorrent has uploaded and downloaded since it
@@ -149,9 +164,10 @@ func (a *application) checkEvents(ctx context.Context, w *watcher, now time.Time
 			a.logger.Printf("[ERROR] saving completed torrents: %s", err)
 		}
 	}
+	a.resendPending(ctx, w, now)
 	if a.wants(eventRtorrent) {
 		events, up := a.healthEvents(ctx, w, now)
-		a.deliver(ctx, events)
+		a.deliver(ctx, w, now, events)
 		if !up {
 			return
 		}
@@ -171,7 +187,7 @@ func (a *application) checkEvents(ctx context.Context, w *watcher, now time.Time
 	events = append(events, together(stalled, "🐢 Stalled: %d downloads")...)
 	events = append(events, a.diskEvents(ctx, w, torrents)...)
 	w.started = true
-	a.deliver(ctx, events)
+	a.deliver(ctx, w, now, events)
 }
 
 // healthEvents tells when rTorrent has not answered for downAfter, when it
@@ -487,43 +503,85 @@ func spaceTorrents(torrents rtapi.Torrents) rtapi.Torrents {
 }
 
 // deliver sends each event to the chats subscribed to it. A chat that has
-// blocked or removed the bot is unsubscribed.
-func (a *application) deliver(ctx context.Context, events []event) {
+// blocked or removed the bot is unsubscribed; what could not be sent to the
+// others waits in w to be tried again.
+func (a *application) deliver(ctx context.Context, w *watcher, now time.Time, events []event) {
 	if len(events) == 0 {
 		return
 	}
 	var subscribers map[int64]notifySettings
 	a.state.read(func(data *stateData) { subscribers = maps.Clone(data.Notify) })
 	for _, chatID := range slices.Sorted(maps.Keys(subscribers)) {
-		settings := subscribers[chatID]
-		chatCtx := ctx
-		if settings.Thread != 0 {
-			chatCtx = context.WithValue(ctx, messageThreadIDKey{}, settings.Thread)
-		}
-		for _, e := range events {
-			if !slices.Contains(settings.Events, e.kind) {
-				continue
-			}
-			var rows [][]models.InlineKeyboardButton
-			if e.hash != "" {
-				rows = append(rows, []models.InlineKeyboardButton{button("ℹ Details", "t:"+e.hash)})
-			}
-			if e.unregistered > 0 {
-				rows = append(rows, []models.InlineKeyboardButton{button(fmt.Sprintf("🧹 %d unregistered: clean up", e.unregistered), "un")})
-			}
-			var err error
-			if len(rows) == 0 {
-				_, err = a.send(chatCtx, chatID, e.text)
-			} else {
-				err = a.sendScreen(chatCtx, chatID, e.text, &models.InlineKeyboardMarkup{InlineKeyboard: rows}, &screen{cleanup: e.unregistered > 0})
-			}
-			if err != nil && chatGone(err) {
-				a.logger.Printf("[INFO] stopped notifying chat %d: %s", chatID, err)
-				a.state.update(func(data *stateData) { delete(data.Notify, chatID) })
-				break
-			}
+		for _, failed := range a.deliverTo(ctx, chatID, subscribers[chatID], events) {
+			w.pending = append(w.pending, pendingNotice{chatID: chatID, event: failed, since: now})
 		}
 	}
+	if extra := len(w.pending) - maxPending; extra > 0 {
+		a.logger.Printf("[WARN] dropped %d notifications that could not be sent", extra)
+		w.pending = slices.Delete(w.pending, 0, extra)
+	}
+}
+
+// resendPending tries again to send the notifications that could not be
+// sent, to the chats that still want them, until they are maxPendingAge old.
+func (a *application) resendPending(ctx context.Context, w *watcher, now time.Time) {
+	pending := w.pending
+	w.pending = nil
+	var subscribers map[int64]notifySettings
+	a.state.read(func(data *stateData) { subscribers = maps.Clone(data.Notify) })
+	for i, notice := range pending {
+		settings, subscribed := subscribers[notice.chatID]
+		if !subscribed || now.Sub(notice.since) > maxPendingAge {
+			continue
+		}
+		if failed := a.deliverTo(ctx, notice.chatID, settings, []event{notice.event}); len(failed) > 0 {
+			// Still failing: keep this one and the rest, in order, for the
+			// next check, rather than failing again for each.
+			w.pending = append(w.pending, pending[i:]...)
+			return
+		}
+	}
+}
+
+// deliverTo sends events a chat wants to it, and returns those it could not
+// send. A chat that has blocked or removed the bot is unsubscribed, and gets
+// nothing more.
+func (a *application) deliverTo(ctx context.Context, chatID int64, settings notifySettings, events []event) []event {
+	chatCtx := ctx
+	if settings.Thread != 0 {
+		chatCtx = context.WithValue(ctx, messageThreadIDKey{}, settings.Thread)
+	}
+	var failed []event
+	for _, e := range events {
+		if !slices.Contains(settings.Events, e.kind) {
+			continue
+		}
+		var rows [][]models.InlineKeyboardButton
+		if e.hash != "" {
+			rows = append(rows, []models.InlineKeyboardButton{button("ℹ Details", "t:"+e.hash)})
+		}
+		if e.unregistered > 0 {
+			rows = append(rows, []models.InlineKeyboardButton{button(fmt.Sprintf("🧹 %d unregistered: clean up", e.unregistered), "un")})
+		}
+		var err error
+		if len(rows) == 0 {
+			_, err = a.send(chatCtx, chatID, e.text)
+		} else {
+			err = a.sendScreen(chatCtx, chatID, e.text, &models.InlineKeyboardMarkup{InlineKeyboard: rows}, &screen{cleanup: e.unregistered > 0})
+		}
+		switch {
+		case err == nil:
+		case chatGone(err):
+			a.logger.Printf("[INFO] stopped notifying chat %d: %s", chatID, err)
+			a.state.update(func(data *stateData) { delete(data.Notify, chatID) })
+			return nil
+		case errors.Is(err, telegram.ErrorBadRequest):
+			// Telegram would refuse it again.
+		default:
+			failed = append(failed, e)
+		}
+	}
+	return failed
 }
 
 // notify shows or changes which events this chat is told about.

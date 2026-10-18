@@ -265,6 +265,9 @@ have changed and tells the operator to refresh before retrying.
 
 Replies longer than three messages arrive as a text file. When Telegram limits
 how fast the bot may send, the bot waits as long as Telegram asks and retries.
+When Telegram answers with a server error, or the connection drops, it tries
+a few more times over several seconds; notifications that still could not be
+sent are tried again at each check, for up to a day.
 
 ## Files
 
